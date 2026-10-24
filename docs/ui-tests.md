@@ -192,6 +192,9 @@ that ends while one of its waits is still pending prints the same list.
     focused; the typed answer and Enter finish the cell, whose console shows
     the question and the answer. `menu()`'s choices are buttons that answer
     with their number (#186, `prompts.test.mjs`).
+48. Live console: a running cell's printed text shows before it ends, and
+    a progress bar redrawn with `"\r"` moves in place, one drawing at a
+    time (#470, #483, `console-live.test.mjs`).
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
 tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree

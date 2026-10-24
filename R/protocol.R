@@ -61,11 +61,14 @@ from_msgpack <- function(x) {
 #' Patches turning `old` into `new`: `list(op, path, value)` with `path` an
 #' unnamed list of keys (character) and array indexes (integer, 0-based).
 #'
-#' Maps recurse; anything else is replaced whole when not identical, with one
-#' exception: an unnamed list whose first `length(old)` elements are
-#' identical to `old` gives one `add` per new element at its index. That is
-#' Pluto's AppendonlyMarker for `logs`, so a cell printing for a minute sends
-#' each line once instead of the whole log on every flush.
+#' Maps recurse; anything else is replaced whole when not identical, with two
+#' exceptions for an unnamed list at least as long as `old`. When its first
+#' `length(old)` elements are identical to `old`, it gives one `add` per new
+#' element at its index. That is Pluto's AppendonlyMarker for `logs`, so a
+#' cell printing for a minute sends each line once instead of the whole log
+#' on every flush. When only `old`'s last element differs, that element is
+#' walked at its index before the adds: a running cell's unfinished line,
+#' redrawn a few times a second, is replaced alone (#483).
 #'
 #' Cost: `identical()` on each pair before walking it, and names matched once
 #' per map (spike: 0.95 ms for one changed cell at 2000 cells). Unchanged
@@ -94,9 +97,14 @@ fb_diff <- function(old, new) {
         if (!is.null(new[[j]])) push(list(op = "add", path = c(path, new_names[j]), value = new[[j]]))
       }
     } else if (is.list(old) && is.list(new) && is.null(names(old)) && is.null(names(new)) &&
-               length(new) > length(old) && identical(old, new[seq_along(old)])) {
-      for (i in seq.int(length(old) + 1L, length(new))) {
-        push(list(op = "add", path = c(path, as.integer(i - 1L)), value = new[[i]]))
+               length(new) >= length(old) &&
+               identical(old[seq_len(max(length(old) - 1L, 0L))], new[seq_len(max(length(old) - 1L, 0L))])) {
+      n <- length(old)
+      if (n > 0L) walk(old[[n]], new[[n]], c(path, as.integer(n - 1L)))
+      if (length(new) > n) {
+        for (i in seq.int(n + 1L, length(new))) {
+          push(list(op = "add", path = c(path, as.integer(i - 1L)), value = new[[i]]))
+        }
       }
     } else {
       push(list(op = "replace", path = path, value = new))

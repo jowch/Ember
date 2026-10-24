@@ -30,15 +30,18 @@ runs:
         restore-keys: apt-${{ github.job }}-
     # apt checks only a cached file's size, not its hash, so only files
     # whose SHA256 matches apt's signed package lists are handed over: a
-    # damaged or altered one is left out and downloaded again.
+    # damaged or altered one is left out and downloaded again. So is one
+    # whose version the lists no longer have (a newer one replaced it):
+    # `apt-cache show` then exits 100, which under the step's `-e -o
+    # pipefail` ended the step with no message (#525).
     - if: runner.os == 'Linux' && steps.cache.outputs.cache-matched-key != ''
       shell: bash
       run: |
-        sudo apt-get update -qq
+        sudo apt-get update
         used=0 skipped=0
         for deb in ~/apt-archives/*.deb; do
           read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
-          want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+          want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }') || want=
           if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
             sudo cp "$deb" /var/cache/apt/archives/
             used=$((used + 1))

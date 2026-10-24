@@ -267,6 +267,23 @@ test_that("the install is told where the universe is", {
   expect_equal(inst$repos[["universe-lab"]], "https://lab.r-universe.dev")
 })
 
+test_that("library(emberui) alone writes its universe entry and fetches the jowch universe's build", {
+  E1 <- "5ae01f2fb57e9e69be8a55c94f2f9e37c22c3ba2"
+  s <- src_state(list(S = cell(""), A = cell("library(emberui)")))
+  r <- drive(s, ev_open(at(1)))
+  expect_setequal(effect_keys(r), c("universe/jowch/emberui", "cran/2026-09-01"))
+  fx <- Find(function(e) identical(e$key, "universe/jowch/emberui"), r$effects)
+  expect_equal(fx$url, "https://jowch.r-universe.dev")
+  key <- universe_key("jowch", "emberui")
+  src <- universe_source("jowch", "https://github.com/jowch/Ember", E1, "inst/emberui")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
+  r <- drive(r$state, ev_index_fetched(key, new_repo_index(key, src, "emberui", "0.0.0.9000", list(character()), FALSE), at(3)))
+  expect_equal(nrow(r$state$packages$problems), 0)
+  expect_equal(format_lock_lines(r$state$file$lock), paste("emberui 0.0.0.9000", src))
+  text <- format_notebook(notebook_file_of(r$state))
+  expect_match(text, '# emberui = "universe:jowch"', fixed = TRUE)
+})
+
 test_that("a reopened notebook keeps the universe commit when the wanted set changes", {
   lock <- open_toyd(sha = D1)$state$file$lock
   s <- src_state(list(S = cell(""), A = cell("library(toyD)")), sources = c(toyD = "universe:lab"), lock = lock)

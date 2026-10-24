@@ -64,6 +64,10 @@ static VOID CALLBACK console_timer(HWND hwnd, UINT msg, UINT_PTR id, DWORD ms) {
   int pending = R_interrupts_pending;
   if (test_break == 2) { test_break = 0; UserBreak = 1; }
   call_now();
+  /* Count the interval from the tick's end, so a slow tick (a long line
+     to read again) can't run back to back with the next one and starve
+     the cell. */
+  SetTimer(NULL, timer, (UINT) (every * 1000), console_timer);
   /* The tick's send runs R_ProcessEvents() (every socket write waits in
      it), which turns an interrupt that arrived meanwhile (UserBreak) into
      a pending one, interrupts being held off. Only R_CheckUserInterrupt()
@@ -90,10 +94,10 @@ static void console_poll(void) {
      file and the socket: only the worker itself may send what was
      printed, or each child would send the parent's text again. */
   if (fun == NULL || busy || getpid() != owner) return;
-  double t = now();
-  if (t - last < every) return;
-  last = t;
+  if (now() - last < every) return;
   call_now();
+  /* From the tick's end, so a slow tick can't starve the cell. */
+  last = now();
 }
 #endif
 
