@@ -1547,6 +1547,74 @@ test_that("a late interrupt result withdraws the restart offer (58)", {
   expect_false(r4$state$worker$restart_offered)
 })
 
+test_that("a stop the running cell finishes before still stops its dependents in autorun (#486)", {
+  # A stop that reaches the run in time gives "interrupted"; one that lands
+  # just as it finishes gives "ok" or "error". Either way the dependents
+  # the stop dropped stay stale, as Esc in plain R drops the lines waiting.
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  r <- drive(r$state, ev_run("A", at(12)))
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(13)))
+  # Without the stop, B runs again (37).
+  expect_equal(drive(r$state, wk_done(1, tok, report(created = "a"), at(15)))$state$worker$running$cell, "B")
+  r <- drive(r$state, ev_interrupt(at(14)))
+  for (rep in list(report(created = "a"), report(status = "error", error = list(message = "boom")))) {
+    r2 <- drive(r$state, wk_done(1, tok, rep, at(15)))
+    expect_null(r2$state$worker$running)
+    expect_equal(r2$state$pending, character())
+    expect_true(isTRUE(r2$state$results$B$stale))
+    expect_null(r2$state$worker$interrupt)
+  }
+  # A run asked for after the stop still runs.
+  r5 <- drive(r$state, ev_run("B", at(15)), wk_done(1, tok, report(created = "a"), at(16)))
+  expect_equal(r5$state$worker$running$cell, "B")
+})
+
+test_that("a run asked for after a stop still runs the ancestors the stopped cell made stale first (#486, #453)", {
+  # A's first run created nothing, so M reads x only once A's next run
+  # reports it. B, asked for after the stop, needs M rerun on the new x
+  # first, as when a run is asked for (#453), whether A's run ended "ok"
+  # after the stop or "interrupted".
+  for (mode in c("autorun", "lazy")) {
+    for (status in c("ok", "interrupted")) {
+      info <- paste(mode, status)
+      s <- fake_state(list(S = cell(""), A = cell('assign("x", 1, envir = globalenv())'),
+                           M = cell("y <- if (exists('x')) x + 1 else 0"), B = cell("y * 2")),
+                      on_cell_change = mode)
+      r <- boot(s, c("A", "M", "B"))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+      r <- drive(r$state, ev_run("A", at(13)))
+      tok <- last_token(r)
+      r <- drive(r$state, wk_running(1, tok, at(14)), ev_interrupt(at(15)), ev_run("B", at(16)),
+                 wk_done(1, tok, report(status = status, created = "x"), at(17)))
+      expect_equal(r$state$worker$running$cell, "M", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(18)))
+      expect_equal(r$state$worker$running$cell, "B", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(19)))
+      expect_false(isTRUE(r$state$results$B$stale), info = info)
+      expect_false(isTRUE(r$state$results$M$stale), info = info)
+      expect_null(r$state$worker$running, info = info)
+    }
+  }
+})
+
+test_that("a stop the running cell finishes before doesn't rerun it for a data file changed during the run (#486)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')))
+  r <- boot(s, "R")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, wk_running(1, tok, at(4)), ev_interrupt(at(5)))
+  r2 <- drive(r$state, wk_done(1, tok, report(created = "d", data_seen = list("d.csv" = "v2"),
+                                             data_changed = "d.csv"), at(6)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_null(r2$state$worker$running)
+  expect_equal(r2$state$pending, character())
+})
+
 test_that("a stale restart-offer timer does nothing (59)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")

@@ -216,6 +216,11 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
       p$kill()
       p$wait(2000)
     }
+    # A killed R never removes its own tempdir(); the server removes its
+    # workers' (remove_worker_tempdir(), #194), and the harness has no
+    # server, so it does the same here (#492).
+    tmp <- worker_tempdir(h$hello$tempdir)
+    if (!is.null(tmp)) unlink(tmp, recursive = TRUE, force = TRUE)
   }
 
   hello <- h$receive()
