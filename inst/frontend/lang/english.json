@@ -271,7 +271,7 @@
     "t_prompt_choices": "Choices",
     "t_prompt_hint": "The cell is waiting for your answer. Press Enter to send it.",
     "t_input_not_assigned": "Assign this input to a name at the top of the cell to use it.",
-    "t_input_read_elsewhere": "Read {{name}} in another cell.",
+    "t_input_read_elsewhere": "To move it, read {{name}} in another cell, not this one.",
     "t_input_not_output": "Only the input on the cell's last line can be moved. Give this one its own cell, or combine the cell's inputs into one with input_list().",
     "t_input_changed": "Not the default. Rscript, and the notebook when it next opens, use {{value}}.",
     "t_input_changed_short": "changed",
