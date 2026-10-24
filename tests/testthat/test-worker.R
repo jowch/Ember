@@ -3245,10 +3245,17 @@ test_that("foreign's read.dta(), read.spss() and read.xport() are learned once f
                 c('f1 <- foreign::read.dta(file.path(D, "f.dta"))',
                   'f2 <- suppressWarnings(foreign::read.spss(file.path(D, "f.sav"), to.data.frame = TRUE))'),
                 c("f.dta", "f.sav"))
-  # foreign can't write a SAS transport file; haven can.
+  # foreign can't write a SAS transport file; haven can. haven isn't in
+  # Suggests, so it is named only in code the worker runs.
   skip_if_not_installed("haven")
-  expect_learns(function(d) haven::write_xpt(data.frame(x = 1:2), file.path(d, "f.xpt"), version = 5),
-                'f3 <- foreign::read.xport(file.path(D, "f.xpt"))', "f.xpt")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  f <- file.path(normalizePath(tempdir(), winslash = "/"), basename(tempfile("ember-xpt-", fileext = ".xpt")))
+  w <- run_and_wait(h, "w", 1L, sprintf("haven::write_xpt(data.frame(x = 1:2), %s, version = 5, name = \"F\")", deparse(f)))
+  expect_identical(w$status, "ok", info = w$error$message)
+  r <- run_and_wait(h, "a", 2L, sprintf("f3 <- foreign::read.xport(%s)", deparse(f)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_identical(names(r$data_seen), f)
 })
 
 test_that("sf's st_read() and read_sf() are learned with a shapefile's other files", {
@@ -3259,13 +3266,16 @@ test_that("sf's st_read() and read_sf() are learned with a shapefile's other fil
   d <- tempfile("ember-pkg-")
   dir.create(d)
   d <- normalizePath(d, winslash = "/")
-  pts <- sf::st_sf(a = 1:2, geometry = sf::st_sfc(sf::st_point(c(1, 2)), sf::st_point(c(3, 4)), crs = 4326))
-  sf::st_write(pts, file.path(d, "p.shp"), quiet = TRUE)
-  sf::st_write(pts, file.path(d, "g.gpkg"), quiet = TRUE)
+  # sf is named only in code the worker runs, since it isn't in Suggests.
+  w <- run_and_wait(h, "w", 1L, sprintf(paste(
+    'D <- %s',
+    'pts <- sf::st_sf(a = 1:2, geometry = sf::st_sfc(sf::st_point(c(1, 2)), sf::st_point(c(3, 4)), crs = 4326))',
+    'sf::st_write(pts, file.path(D, "p.shp"), quiet = TRUE)',
+    'sf::st_write(pts, file.path(D, "g.gpkg"), quiet = TRUE)', sep = "\n"), deparse(d)))
+  expect_identical(w$status, "ok", info = w$error$message)
   shp <- list.files(d, pattern = "^p[.]")
   expect_true(all(c("p.shp", "p.dbf", "p.shx", "p.prj") %in% shp))
-  r <- run_and_wait(h, "a", 1L, sprintf('D <- %s\np <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))',
-                                         deparse(d)))
+  r <- run_and_wait(h, "a", 2L, 'p <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))')
   expect_identical(r$status, "ok", info = r$error$message)
   # A part the shapefile doesn't have (often .cpg) isn't a file read.
   expect_setequal(names(r$data_seen)[unlist(r$data_seen) != "missing"], file.path(d, c(shp, "g.gpkg")))
