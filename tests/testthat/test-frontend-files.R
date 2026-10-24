@@ -316,6 +316,32 @@ test_that("piece 6's chip, error, warning, ANSI and wash tokens meet WCAG 4.5:1 
   }
 })
 
+# ---- #591. A disabled cell's output stays readable -------------------------
+
+#' `--ember-<name>: <number>;` in `text`.
+read_number <- function(text, name) {
+  m <- regmatches(text, regexpr(paste0("--ember-", name, ":\\s*[0-9.]+"), text, perl = TRUE))
+  stopifnot(nzchar(m))
+  as.numeric(sub(paste0("--ember-", name, ":\\s*"), "", m))
+}
+
+test_that("a disabled output, greyed and faded, reads at 3:1 and stays fainter than a stale one (#591)", {
+  dir <- frontend_dir()
+
+  for (theme in c("light.css", "dark.css")) {
+    theme_path <- file.path(dir, "themes", theme)
+    text <- readChar(theme_path, file.info(theme_path)$size)
+
+    a <- read_number(text, "dis-opacity")
+    expect_lt(a, read_number(text, "stale-opacity"), label = theme)
+    page <- hex_to_rgb(read_token(text, "page"))
+    grey <- rep(sum(c(0.2126, 0.7152, 0.0722) * hex_to_rgb(read_token(text, "text"))), 3)
+    seen <- a * grey + (1 - a) * page
+    hex <- function(rgb) sprintf("#%02x%02x%02x", round(rgb[1]), round(rgb[2]), round(rgb[3]))
+    expect_gte(contrast_ratio(hex(seen), hex(page)), 3, label = theme)
+  }
+})
+
 # ---- 138. RunArea and ember-cell-label are gone ----------------------------
 
 test_that("RunArea.js and ember-cell-label are gone; cells.css is wired in (138)", {
