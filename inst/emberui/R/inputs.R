@@ -39,7 +39,7 @@ input_slider <- function(min, max, value = min, step = NULL, label = NULL) {
   check_step(step)
   check_label(label)
   report(list(type = "slider", value = value, min = min, max = max, step = step,
-              label = label, check = number_check(value, min, max)), call)
+              label = label, check = number_check(value, min, max, step)), call)
 }
 
 input_number <- function(value = 0, min = NA, max = NA, step = NA, label = NULL) {
@@ -164,25 +164,40 @@ input_list <- function(...) {
 
 # A number in [min, max] (`NA` is no limit), returned with `value`'s type:
 # an integer input rounds.
-number_check <- function(value, min, max) {
+number_check <- function(value, min, max, step = NULL) {
   integer <- is.integer(value)
+  allowed <- number_allowed(min, max, integer, step)
   function(x) {
     if (!is.numeric(x) || length(x) != 1 || !is.finite(x)) {
-      stop(number_allowed(min, max, integer), call. = FALSE)
+      stop(allowed, call. = FALSE)
     }
     # An integer input rounds first, so the rounded value is the one in range.
     x <- if (integer) round(x) else as.numeric(x)
     if ((!is.na(min) && x < min) || (!is.na(max) && x > max) ||
-        (integer && abs(x) > .Machine$integer.max)) {
-      stop(number_allowed(min, max, integer), call. = FALSE)
+        (integer && abs(x) > .Machine$integer.max) || !on_step(x, min, step)) {
+      stop(allowed, call. = FALSE)
     }
     if (integer) as.integer(x) else x
   }
 }
 
-number_allowed <- function(min, max, integer) {
+# Whether `x` is on a slider's steps, counted from `min`, as the browser's
+# own slider counts them. Only a slider passes a step: a number box takes it
+# as a hint, as Pluto's NumberField and Shiny's numericInput do (#448). The
+# page sends decimals (0.3 from 0 in steps of 0.1), which differ from
+# min + k * step by a rounding error, so a step is matched to within 1e-9 of
+# one.
+on_step <- function(x, min, step) {
+  if (is.null(step) || is.na(step)) return(TRUE)
+  k <- (x - min) / step
+  abs(k - round(k)) <= 1e-9 * max(1, abs(k))
+}
+
+number_allowed <- function(min, max, integer, step = NULL) {
   what <- if (integer) "a whole number" else "a number"
-  if (!is.na(min) && !is.na(max)) {
+  if (!is.null(step) && !is.na(step)) {
+    sprintf("The value must be %s from %s to %s in steps of %s.", what, format(min), format(max), format(step))
+  } else if (!is.na(min) && !is.na(max)) {
     sprintf("The value must be %s from %s to %s.", what, format(min), format(max))
   } else if (!is.na(min)) {
     sprintf("The value must be %s of at least %s.", what, format(min))

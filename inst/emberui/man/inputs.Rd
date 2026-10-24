@@ -32,8 +32,9 @@ input_list(...)
 \item{value}{The default value. A number keeps its type:
   \code{input_slider(1L, 10L)} returns an integer.}
 \item{step}{The step between the widget's values, or \code{NULL} or
-  \code{NA} for none. It shapes the widget only: a value between steps is
-  allowed.}
+  \code{NA} for none. A slider's values are its steps, counted from
+  \code{min}: a value between them, the default included, is an error. A
+  number box takes its step as a hint and allows a value between steps.}
 \item{label}{The text shown with the widget. By default, the name the input
   is assigned to.}
 \item{choices}{A vector or list. The value is an element itself, not its
