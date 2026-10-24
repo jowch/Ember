@@ -159,7 +159,9 @@ out of the way of the data, the code and the results.
 (Board "Round 3 · Header and notebook controls".)
 
 - Logo, file name (click: rename or move, see Notebooks), "Saved", "Run N not
-  run" only while something can run, the R status as a button that opens
+  run" only while something can run, "Run changed" while a cell is edited and
+  the window is too narrow for the floating ⌘ S button to sit in the margin
+  (over the column it covered cells, #456), the R status as a button that opens
   Status, icons for Variables, Help and Packages (each opens the panel at that
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
   another notebook). See Menus and Settings below.

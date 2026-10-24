@@ -26,8 +26,6 @@ const WIDTHS = [600, 900, 1440];
 /** Known open bugs: { rule, where (a substring of the problem's where),
  * detail (optional, a substring of its detail), issue }. */
 const KNOWN = [
-  // The floating "Run all changed" button covers a scrolled cell's menu.
-  { rule: "covered", where: "button.input_context_menu", detail: "by preamble > div#saveall-container", issue: 456 },
 ];
 const used = new Set();
 
@@ -82,8 +80,27 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
       await openNotebook(p, server.origin, server.secret, notebook);
     }
     await setCellCode(p, "B", "sum(x) + 1");
-    await p.waitForSelector("#saveall-container.ask_to_save");
+    await p.waitForSelector("#saveall-container.ask_to_save", { state: "attached" });
     await sweep(p, `edited-${platform}`);
+    // The floating "Run all changed" covers cells over the column (#456), so it floats only in
+    // the margin, and the header's "Run changed" takes over where it can't.
+    for (const [width, floating] of [[600, false], [900, false], [1440, true]]) {
+      await p.setViewportSize({ width, height: 900 });
+      const shown = await p.evaluate(() => ({
+        floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+        header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+      }));
+      assert.deepEqual(shown, { floating, header: !floating }, `at ${width}`);
+    }
+    // With the side panel docked, the margin is the panel's, so the button would float over the column.
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+    await p.waitForSelector("#helpbox-wrapper.open");
+    const docked = await p.evaluate(() => ({
+      floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+      header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+    }));
+    assert.deepEqual(docked, { floating: false, header: true }, "at 1440 with the side panel docked");
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: null })));
     assertNoProblems(p);
   }
 });
