@@ -1003,8 +1003,15 @@ data_watch_step <- function(run, k) {
     f <- files[[i]]
     now <- sigs[[i]]
     if (!identical(now, run$seen[[key]])) {
-      touch <- as.integer(unlist(f$touch))
-      if (length(touch) && k > min(touch) && !(k %in% touch)) run$changed <- union(run$changed, key)
+      if (isTRUE(f$learned)) {
+        # Its version was taken as it was read, so a change since, even in
+        # the reading expression, came after the read: someone else's,
+        # unless this expression writes it.
+        if (k >= min(f$reads) && !(k %in% f$writes)) run$changed <- union(run$changed, key)
+      } else {
+        touch <- as.integer(unlist(f$touch))
+        if (length(touch) && k > min(touch) && !(k %in% touch)) run$changed <- union(run$changed, key)
+      }
       run$seen[[key]] <- now
     }
   }
@@ -1022,6 +1029,9 @@ data_watch_seen <- function(run) {
 #' The run's watch list while a cell runs (`data_watch_start()`), for the
 #' reads `data_learn()` records; `NULL` between runs.
 data_run <- NULL
+
+#' Whether path `p` is absolute: from the root, a drive, a share or home.
+data_absolute <- function(p) grepl("^(/|~|[A-Za-z]:|\\\\\\\\)", p)
 
 #' A path with its folder and links resolved and "/" between parts, for
 #' telling two spellings of one file apart.
@@ -1062,6 +1072,9 @@ data_reader_args <- list(
 #' The readers that open their path through a connection, the connections
 #' whose file Ember can watch, and the classes that read no file (text, a
 #' URL, a command's output, a socket).
+#' A reader's second argument that names its file, taken when the first
+#' gives none (rules.R's walker also takes `file` for any reader).
+data_reader_alt <- list(fread = "file")
 data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
 data_base_hooked <- c("readLines", "readRDS", "load")
 data_file_classes <- c("file", "gzfile", "bzfile", "xzfile", "zstdfile", "unz")
@@ -1088,9 +1101,12 @@ data_learn <- function(value, reader = NULL, mode = "r") {
   run <- data_run
   if (is.null(run) || is.null(running) || length(load_stack) > 0) return(invisible())
   write <- startsWith(mode, "w") || startsWith(mode, "a")
-  # The common case first: the same path read again in this expression.
+  # The common case first: the same path read again in this expression,
+  # from the same folder (a relative path names another file after a
+  # setwd()).
+  wd <- getwd()
   if (!write && is.character(value) && length(value) == 1 && !is.na(value) && nzchar(value) &&
-      identical(run$raw[[value]], run$at)) return(invisible())
+      identical(run$raw[[paste0(wd, "\n", value)]], run$at)) return(invisible())
   paths <- character()
   if (inherits(value, "connection")) {
     cls <- tryCatch(class(value)[1], error = function(e) "")
@@ -1110,15 +1126,20 @@ data_learn <- function(value, reader = NULL, mode = "r") {
                  !grepl("\n", paths, fixed = TRUE) &
                  !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", paths)]
   for (p in unique(paths)) {
-    if (!write) run$raw[[p]] <- run$at
-    full <- data_canon(p)
+    if (!write) run$raw[[paste0(wd, "\n", p)]] <- run$at
+    # normalizePath() leaves a missing relative path as it is: made
+    # absolute first, it names the file in the folder the read ran in.
+    full <- data_canon(if (data_absolute(p)) p else file.path(wd, p))
     key <- run$canon[[full]]
     if (!is.null(key)) {
       f <- run$files[[key]]
-      if (!(run$at %in% f$touch)) {
-        f$touch <- sort(c(as.integer(unlist(f$touch)), run$at))
-        run$files[[key]] <- f
+      changed <- FALSE
+      if (!(run$at %in% f$touch)) { f$touch <- sort(c(as.integer(unlist(f$touch)), run$at)); changed <- TRUE }
+      if (isTRUE(f$learned)) {
+        field <- if (write) "writes" else "reads"
+        if (!(run$at %in% f[[field]])) { f[[field]] <- sort(c(f[[field]], run$at)); changed <- TRUE }
       }
+      if (changed) run$files[[key]] <- f
       next
     }
     if (write || full %in% run$sourced || any(startsWith(full, run$skip))) next
@@ -1129,10 +1150,11 @@ data_learn <- function(value, reader = NULL, mode = "r") {
     # "path" may be a command or data (fread("grep x f.csv")).
     if (is.na(info$mtime) && (!is.null(reader) || !startsWith(mode, "r"))) next
     key <- if (startsWith(full, run$home)) substring(full, nchar(run$home) + 1L) else full
-    touch <- run$at
-    for (w in run$writes) if (is.null(w$full) || identical(w$full, full)) touch <- c(touch, w$index)
-    touch <- sort(unique(touch))
-    run$files[[key]] <- list(path = key, full = full, touch = touch)
+    writes <- integer()
+    for (w in run$writes) if (is.null(w$full) || identical(w$full, full)) writes <- c(writes, w$index)
+    writes <- sort(unique(writes))
+    run$files[[key]] <- list(path = key, full = full, touch = sort(unique(c(run$at, writes))),
+                             learned = TRUE, reads = run$at, writes = writes)
     run$seen[[key]] <- if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
     run$canon[[full]] <- key
   }
@@ -1162,9 +1184,15 @@ ember_data_isopen <- function(con, rw = "") {
 #' Hook for reader `name`, called first in it with the argument that names
 #' its file (`value`, missing when the call doesn't give it). Forcing it
 #' here forces it as the reader would at once; an error is the call's own.
-ember_data_read <- function(name, value) {
+ember_data_read <- function(name, value, alt) {
   run <- data_run
-  if (is.null(run) || missing(value)) return(invisible())
+  if (is.null(run)) return(invisible())
+  # A reader with a second way to name its file (`fread(file = p)`, whose
+  # `input` is then "") takes it when the first gives none.
+  if (missing(value) || identical(value, "")) {
+    if (missing(alt)) return(invisible())
+    value <- alt
+  }
   if (inherits(value, "connection")) {
     # read.table() calls scan() on its connection several times: a
     # connection already looked at in this expression is skipped by its
@@ -1218,7 +1246,9 @@ hook_data_readers <- function(pkg) {
   for (name in names(spec)) {
     fun <- get0(name, envir = ns, inherits = FALSE)
     if (!is.function(fun) || is.primitive(fun) || !(spec[[name]] %in% names(formals(fun)))) next
-    hook <- bquote((.(ember_data_read))(.(name), .(as.name(spec[[name]]))))
+    alt <- data_reader_alt[[name]]
+    hook <- if (is.null(alt)) bquote((.(ember_data_read))(.(name), .(as.name(spec[[name]]))))
+            else bquote((.(ember_data_read))(.(name), .(as.name(spec[[name]])), .(as.name(alt))))
     tryCatch(replace_binding(ns, name, hook_function(fun, hook), pkg), error = function(e) NULL)
   }
   invisible()

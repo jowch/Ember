@@ -2936,6 +2936,36 @@ test_that("a run learns the files it reads however the path is built, with each 
   expect_identical(names(r3$data_seen), file.path(d, "a.csv"))
 })
 
+test_that("a relative path read in a loop over folders is learned in each folder, and a missing one where it was looked for", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- normalizePath(tempfile("ember-wd-"), winslash = "/", mustWork = FALSE)
+  for (s in c("a", "b")) {
+    dir.create(file.path(d, s), recursive = TRUE)
+    writeLines("x\n1", file.path(d, s, "data.csv"))
+  }
+  r <- run_and_wait(h, "a", 1L, sprintf('for (s in c("a", "b")) { setwd(file.path(%s, s)); x <- read.csv("data.csv") }', deparse(d)))
+  expect_identical(r$status, "ok")
+  expect_setequal(names(r$data_seen), file.path(d, c("a", "b"), "data.csv"))
+
+  r2 <- run_and_wait(h, "b", 2L, sprintf('setwd(file.path(%s, "a")); v <- try(read.csv("nope.csv"), silent = TRUE)', deparse(d)))
+  expect_identical(r2$data_seen, stats::setNames(list("missing"), file.path(d, "a", "nope.csv")))
+})
+
+test_that("a change after the read within the reading expression is someone else's", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- normalizePath(tempfile("ember-within-"), winslash = "/", mustWork = FALSE)
+  dir.create(d)
+  writeLines("x\n1", file.path(d, "a.csv"))
+  writeLines("x\n22", file.path(d, "other.csv"))
+  r <- run_and_wait(h, "a", 1L, sprintf('{ a <- read.csv(file.path(%1$s, "a.csv")); file.copy(file.path(%1$s, "other.csv"), file.path(%1$s, "a.csv"), overwrite = TRUE) }', deparse(d)))
+  expect_identical(r$data_changed, file.path(d, "a.csv"))
+  # Its own write in that expression isn't.
+  r2 <- run_and_wait(h, "b", 2L, sprintf('{ a <- read.csv(file.path(%1$s, "a.csv")); write.csv(a, file.path(%1$s, "a.csv")) }', deparse(d)))
+  expect_length(r2$data_changed, 0)
+})
+
 test_that("a learned file inside the notebook's folder is named relative to it, as a literal path is", {
   h <- worker_harness()
   on.exit(h$close())
@@ -3007,11 +3037,11 @@ test_that("a package reader that reads in compiled code is learned once its pack
   on.exit(h$close())
   d <- normalizePath(tempfile("ember-pkg-"), winslash = "/", mustWork = FALSE)
   dir.create(d)
-  for (n in c("a.csv", "b.csv", "c.csv")) writeLines("x,y\n1,2", file.path(d, n))
-  r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nb <- readr::read_csv(file.path(%1$s, "b.csv"), show_col_types = FALSE)\nt <- data.table::fread("x,y\\n3,4")',
+  for (n in c("a.csv", "b.csv", "c.csv", "f.csv")) writeLines("x,y\n1,2", file.path(d, n))
+  r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nb <- readr::read_csv(file.path(%1$s, "b.csv"), show_col_types = FALSE)\nt <- data.table::fread("x,y\\n3,4")\nf <- data.table::fread(file = file.path(%1$s, "f.csv"))',
                                          deparse(d)))
   expect_identical(r$status, "ok", info = r$error$message)
-  expect_setequal(names(r$data_seen), file.path(d, c("a.csv", "b.csv")))
+  expect_setequal(names(r$data_seen), file.path(d, c("a.csv", "b.csv", "f.csv")))
   r2 <- run_and_wait(h, "b", 2L, sprintf('library(readr)\nc <- read_csv(file.path(%s, "c.csv"), show_col_types = FALSE)', deparse(d)))
   expect_identical(r2$status, "ok")
   expect_identical(names(r2$data_seen), file.path(d, "c.csv"))

@@ -436,7 +436,9 @@ before the cell runs.
 - The cost, measured in the worker on a cloud container, is about 15 µs
   for each read of a file the run already read and about 0.2 ms the first
   time (`lapply()` over 2000 small CSVs: 1.3 s, against 0.74 s in plain R).
-  Code that reads no file pays nothing. The worker hooks the connections
+  Code that reads no file pays nothing. After each top-level expression
+  the worker checks every file the run has read so far, in one
+  `file.info()` call: about 7 ms for 2000 files. The worker hooks the connections
   and readers by putting a call first in their bodies, not with `trace()`,
   and leaves alone the readers whose body has a loop (read.table() and
   read.fwf(), which reach a connection through `file()` or `isOpen()`, and
@@ -489,9 +491,12 @@ before the cell runs.
   `writeLines`, `writeBin`, `writeChar`, `sink`, `capture.output`,
   `file.append`, `file.copy`, `file.rename` and `download.file`, besides
   the table and serialization writers.
-- The check is per top-level expression. An expression that reads the
-  file and then works for a long time (`d <- read.csv("d.csv") |>
-  slow_step()`) treats a change during that work as read with it.
+- The check is per top-level expression. For a literal path, an
+  expression that reads the file and then works for a long time
+  (`d <- read.csv("d.csv") |> slow_step()`) treats a change during that
+  work as read with it. A file the run learns has its version taken as it
+  is read, so a change after that, even in the same expression, is someone
+  else's unless the expression writes the file.
 - A file saved with the same bytes isn't a change. The shell compares sizes
   first and hashes a file only when a rewrite keeps its size; the first
   such rewrite after opening counts as a change, since there is no earlier
