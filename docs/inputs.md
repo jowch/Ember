@@ -92,7 +92,8 @@ Any other input call returns its default, as under `Rscript`, and it
 shows as a read-only line below the cell, with a note naming the fix. A
 call inside a function, a loop or `round(...)` gets "Assign this input to
 a name at the top of the cell to use it." A binding broken by rule 3 gets
-"Read `n` in another cell." No R warning, since plain R wouldn't give one.
+"To move it, read `n` in another cell, not this one." No R warning, since
+plain R wouldn't give one.
 
 Why so strict: Ember sets the variable without rerunning the cell. That is
 only the same as rerunning when the variable *is* the call's value and the
@@ -468,7 +469,7 @@ R API. Nothing shows on the page yet.
   Give this one its own cell, or combine the cell's inputs into one with
   input_list()." when bound, otherwise
   "Assign this input to a name at the top of the cell to use it." or
-  "Read `n` in another cell.".
+  "To move it, read `n` in another cell, not this one.".
 - **Sending.** A slider sends as it moves; a number box and a text box send
   on Enter or when the user leaves them; the others on each change. A
   number box sends only a number within its `min` and `max`; anything
