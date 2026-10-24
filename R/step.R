@@ -911,7 +911,7 @@ is_fresh <- function(state, id) {
 #' keep the graph from before an edit, because what matters is what the
 #' worker's globals came from, which `results[[id]]$defined` records
 #' directly.
-invalidate_dependents <- function(state, id, names, queue = TRUE,
+invalidate_dependents <- function(state, id, names, queue = TRUE, waiting = queue,
                                   was_setting = isTRUE(state$results[[id]]$setting)) {
   edited <- edited_cells(state)
   g <- run_graph(state, edited)
@@ -932,7 +932,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
   if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, walk, known = below))
-  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, g = g)
+  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, waiting = waiting, g = g)
 }
 
 #' The cells other than `id` that read any of `names`, and everything
@@ -958,8 +958,11 @@ readers_of <- function(state, id, names, edited = edited_cells(state),
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
 #' them: `invalidate_dependents()`'s rule, for a set of cells already
-#' worked out.
-invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(state)) {
+#' worked out. `waiting` (`queue` unless given) queues the stale ancestors
+#' of dependents already pending (#453): a stop passes `queue = FALSE`,
+#' `waiting = TRUE`, since what is pending then is what the user asked
+#' for after it (#486).
+invalidate_cells <- function(state, id, dependents, queue = TRUE, waiting = queue, g = run_graph(state)) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   # Whole vectors at a time: a chain's rerun passes most of the notebook
   # here for every cell, and a lookup by name scans the names (#316).
@@ -975,11 +978,12 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
   } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
-  # A cell already pending (a run asked for by hand, in lazy mode) that
-  # reads what this just made stale needs it rerun first, as when the run
-  # was asked for (#453). An edit never runs anything, so not for `queue = FALSE`.
-  waiting <- if (queue) intersect(state$pending, dependents) else character()
-  queue_stale_ancestors(state, union(queued, waiting), id, g)
+  # A cell already pending (a run asked for by hand, in lazy mode or
+  # after a stop) that reads what this just made stale needs it rerun
+  # first, as when the run was asked for (#453). An edit never runs
+  # anything, so not for an edit's `queue = FALSE`.
+  readers <- if (waiting) intersect(state$pending, dependents) else character()
+  queue_stale_ancestors(state, union(queued, readers), id, g)
 }
 
 #' Queue the stale ancestors of `queued`, cells autorun has just queued.
@@ -2249,7 +2253,9 @@ reduce_wk_done <- function(state, event) {
     # `report$created` knows them) still need marking stale, the same as
     # the "ok"/"error" branch below; that's what invalidate_dependents()
     # (not drop_downstream(), which only walks graph edges) is for.
-    state <- invalidate_dependents(state, id, report$created %||% character(), queue = FALSE)
+    # A run asked for after the stop is pending, though: its stale
+    # ancestors still run first (#453).
+    state <- invalidate_dependents(state, id, report$created %||% character(), queue = FALSE, waiting = TRUE)
   } else {
     # "ok" and "error" both invalidate the same way: a failed cell's
     # dependents run on their own and fail if they need what it would have

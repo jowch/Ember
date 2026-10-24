@@ -1474,6 +1474,36 @@ test_that("a stop the running cell finishes before still stops its dependents in
   expect_equal(r5$state$worker$running$cell, "B")
 })
 
+test_that("a run asked for after a stop still runs the ancestors the stopped cell made stale first (#486, #453)", {
+  # A's first run created nothing, so M reads x only once A's next run
+  # reports it. B, asked for after the stop, needs M rerun on the new x
+  # first, as when a run is asked for (#453), whether A's run ended "ok"
+  # after the stop or "interrupted".
+  for (mode in c("autorun", "lazy")) {
+    for (status in c("ok", "interrupted")) {
+      info <- paste(mode, status)
+      s <- fake_state(list(S = cell(""), A = cell('assign("x", 1, envir = globalenv())'),
+                           M = cell("y <- if (exists('x')) x + 1 else 0"), B = cell("y * 2")),
+                      on_cell_change = mode)
+      r <- boot(s, c("A", "M", "B"))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+      r <- drive(r$state, ev_run("A", at(13)))
+      tok <- last_token(r)
+      r <- drive(r$state, wk_running(1, tok, at(14)), ev_interrupt(at(15)), ev_run("B", at(16)),
+                 wk_done(1, tok, report(status = status, created = "x"), at(17)))
+      expect_equal(r$state$worker$running$cell, "M", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(18)))
+      expect_equal(r$state$worker$running$cell, "B", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(19)))
+      expect_false(isTRUE(r$state$results$B$stale), info = info)
+      expect_false(isTRUE(r$state$results$M$stale), info = info)
+      expect_null(r$state$worker$running, info = info)
+    }
+  }
+})
+
 test_that("a stop the running cell finishes before doesn't rerun it for a data file changed during the run (#486)", {
   s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')))
   r <- boot(s, "R")
