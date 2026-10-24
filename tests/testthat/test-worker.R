@@ -148,21 +148,24 @@ test_that("an unfinished line is drawn from its kept start and what came after i
   expect_identical(x$col$items, list(whole))
 })
 
-test_that("a line redrawn many times costs each tick only what was printed since the last (#483)", {
-  # Before the fix, each tick read the whole line again: four times the
-  # redraws took about sixteen times as long, and a cell printing a
-  # counter 300,000 times hadn't finished after ten minutes.
-  redraw <- function(n) function() {
-    x <- local_collector()
-    for (i in seq_len(n)) {
-      cat("\r", i)
-      if (i %% 50L == 0L) x$col$flush_live()
+test_that("a line redrawn many times is read at each tick only from its last \\r (#483)", {
+  # Before the fix, each tick read the whole line again from its start, so
+  # each tick cost more than the last, and a cell printing a counter
+  # 300,000 times hadn't finished after ten minutes. What a tick has seen
+  # but will read again (from read_pos to the file's end) must stay one
+  # drawing long, however many came before.
+  x <- local_collector()
+  again <- integer()
+  for (i in seq_len(2000)) {
+    cat("\r", i)
+    if (i %% 50L == 0L) {
+      x$col$flush_live()
+      again <- c(again, file.size(x$col$path) - x$col$read_pos)
     }
-    x$col$finish()
   }
-  r <- time_ratio(redraw(8000), redraw(2000), samples = 5L)
-  cat(sprintf("\n[timing] 8000 redraws %.0f ms, 2000 redraws %.0f ms (%.1fx)\n", r$a * 1000, r$b * 1000, r$ratio))
-  expect_lt(r$ratio, 8)
+  expect_lte(max(again), nchar("\r 2000"))
+  expect_identical(x$col$line, " 1999")
+  expect_identical(x$sent$items[[length(x$sent$items)]]$text, " 2000")
 })
 
 test_that("an unfinished line cut inside a character is sent up to that character (#483)", {
