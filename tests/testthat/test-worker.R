@@ -104,7 +104,7 @@ test_that("a forked child doesn't send its parent's printed text again (#470)", 
     sent[[length(sent) + 1]] <<- m$item
     writeLines("", go)
   })
-  expect_identical(r$status, "ok")
+  expect_identical(r$status, "ok", info = r$error$message)
   # The children's copies would come as console frames of their own.
   expect_identical(sent, list(list(kind = "stdout", text = "before\n")))
   expect_identical(r$console, sent)
@@ -2514,7 +2514,9 @@ test_that("a value that prints many lines shows at once, and print() keeps every
 
   r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
   printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
-  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  # The page joins consecutive stdout items as they are; a long print can
+  # come in several, each ending at a line (#470).
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
   expect_identical(length(lines), 50000L)
   expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
 })
