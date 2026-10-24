@@ -20,7 +20,7 @@ import net from "node:net";
 import http from "node:http";
 import crypto from "node:crypto";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook, connectionSettled } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, connectionSettled, pauseClock } from "../browser.mjs";
 
 /** No uncaught error on the page. Failed connects log console errors of
  * their own (the browser's and the page's), which are expected here. */
@@ -226,7 +226,7 @@ test("dead port: a sleep in the middle of an outage doesn't count towards the 30
 
   // One failed try, then an hour's sleep. The clock stays paused from here
   // on, so only fastForward moves it, however slow the runner is.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   await connectionSettled(page);
   await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
 
