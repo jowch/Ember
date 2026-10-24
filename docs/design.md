@@ -731,8 +731,9 @@ blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. They show while the cell runs, as in an R console: messages and
-warnings at once, and printed text a whole line at a time, a few times a
-second (#470). The worker reads what the cell printed from R's event
+warnings at once, and printed text a few times a second (#470). The line
+still being written shows as it stands and is redrawn in place, so a
+progress bar drawn with `"\r"` moves (#483). The worker reads what the cell printed from R's event
 processing, which R reaches wherever it checks for an interrupt; a cell
 inside C code that doesn't check shows its text when that code returns.
 On Windows, where R exports no such hook, a timer that R's event

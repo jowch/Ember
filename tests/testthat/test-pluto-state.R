@@ -361,6 +361,26 @@ test_that("a running cell's growing console gives an add patch, not a replace (1
   expect_true(all(vapply(logs_patches, function(p) identical(p$op, "add"), logical(1))))
 })
 
+test_that("a running cell's unfinished line is replaced in place, by its next drawing and by the whole line (#483)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
+  r <- boot(s, "A")
+  r1 <- drive(r$state, wk_console(1, last_token(r), list(kind = "stdout", text = "a\n"), at(10)))
+  r2 <- drive(r1$state, wk_console(1, last_token(r), list(kind = "stdout", text = " 10%", partial = TRUE), at(11)))
+  r3 <- drive(r2$state, wk_console(1, last_token(r), list(kind = "stdout", text = " 20%", partial = TRUE), at(12)))
+  r4 <- drive(r3$state, wk_console(1, last_token(r), list(kind = "stdout", text = "100%\n"), at(13)))
+  expect_identical(r3$state$worker$running$console,
+                   list(list(kind = "stdout", text = "a\n"), list(kind = "stdout", text = " 20%", partial = TRUE)))
+  expect_identical(r4$state$worker$running$console,
+                   list(list(kind = "stdout", text = "a\n"), list(kind = "stdout", text = "100%\n")))
+  # The page gets only the redrawn item's text, not the whole log again.
+  p2 <- pluto_state(r2$state)
+  p3 <- pluto_state(r3$state, p2)
+  logs_patches <- Filter(function(p) "logs" %in% as.character(p$path), fb_diff(p2$js, p3$js))
+  expect_length(logs_patches, 1)
+  expect_identical(logs_patches[[1]]$op, "replace")
+  expect_identical(tail(logs_patches[[1]]$path, 2), list(1L, "msg"))
+})
+
 # ---- 12. Stale / blocked-by-failure / code_differs ----------------------------
 #
 # Increment 2 (ui-2.md, 5) narrows `depends_on_disabled_cells` to

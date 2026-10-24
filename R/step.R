@@ -1852,14 +1852,19 @@ reduce_wk_running <- function(state, event) {
   list(state = state, effects = effects, reply = NULL)
 }
 
-#' gen and token check; append the item to `worker$running$console`.
+#' gen and token check; append the item to `worker$running$console`. A
+#' partial item (the line a running cell is still writing, #483) is always
+#' the last one, and the next item replaces it, as in the worker.
 reduce_wk_console <- function(state, event) {
   w <- state$worker
   if (!eq(event$gen, w$gen) || is.null(w$running) ||
       !eq(event$token, w$running$token)) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  state$worker$running$console <- c(w$running$console, list(event$item))
+  console <- w$running$console
+  n <- length(console)
+  if (n > 0 && isTRUE(console[[n]]$partial)) console <- console[-n]
+  state$worker$running$console <- c(console, list(event$item))
   list(state = state, effects = list(), reply = NULL)
 }
 
