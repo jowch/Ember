@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureLib } from "./install.mjs";
+import { knownFor } from "./known.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { lib, owned: ownLib } = ensureLib();
@@ -45,10 +46,26 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => {
 const RESULTS = path.join(HERE, "test-results");
 const waitLists = () => (existsSync(RESULTS) ? readdirSync(RESULTS).filter((f) => /^waiting-.*\.txt$/.test(f)) : []);
 for (const f of waitLists()) rmSync(path.join(RESULTS, f), { force: true });
+// Each failed test, written by known-reporter.mjs (known.mjs).
+const failures = path.join(runDir, "failures.jsonl");
+// A run whose only failures are known ones (known.mjs) passes, with each
+// named. Any other failure, or a run that ended any other way, fails as it
+// would without the list.
+const knownOnly = () => {
+  if (!existsSync(failures)) return false;
+  const failed = readFileSync(failures, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  if (failed.length === 0 || !failed.every((f) => knownFor(f.message))) return false;
+  for (const f of failed) {
+    const line = `known #${knownFor(f.message).issue}, not counted: "${f.name}" failed with ${f.message}`;
+    console.log(process.env.GITHUB_ACTIONS ? `::warning::${line}` : line);
+  }
+  return true;
+};
 const finish = (code, signal) => {
   for (const f of waitLists()) {
     console.log(`\n== test-results/${f}\n${readFileSync(path.join(RESULTS, f), "utf8")}`);
   }
+  if (code === 1 && !signal && !stopped && knownOnly()) code = 0;
   if (ownLib) rmSync(lib, { recursive: true, force: true });
   // A file something still holds is left for the OS, not a failed run.
   try { rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
@@ -63,7 +80,11 @@ child = spawn(process.execPath, ["warmup.mjs"], { cwd: HERE, stdio: "inherit", e
 child.on("exit", () => {
   if (stopped) return finish(1);
   child = spawn(process.execPath,
-    ["--test", "--test-timeout=300000", "--test-concurrency=3", ...tests],
+    ["--test", "--test-timeout=300000", "--test-concurrency=3",
+     // The usual output, as node picks it, plus the failures for known.mjs.
+     `--test-reporter=${process.stdout.isTTY ? "spec" : "tap"}`, "--test-reporter-destination=stdout",
+     "--test-reporter=./known-reporter.mjs", `--test-reporter-destination=${failures}`,
+     ...tests],
     { cwd: HERE, stdio: "inherit", env });
   child.on("exit", finish);
 });
