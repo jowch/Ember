@@ -325,18 +325,23 @@ renv_failed_packages <- function(message) {
 #' `list(package, message, output)` per failed package, `output` carrying
 #' the exit status as its `status` attribute when it isn't 0. A build that
 #' printed nothing gets an `ERROR:` line, which `install_failures()` and
-#' `install_failure_message()` take as its reason; one that printed
-#' something gets a line with its status. -> character.
+#' `install_failure_message()` take as its reason (its status is 0 when
+#' the attribute is missing: only `system()` gives an empty output). One
+#' that printed something gets a line with its status only when it has
+#' one: a failure renv describes itself (a binary that didn't install, a
+#' worker that died or timed out) has no status, and its words are already
+#' renv's output. -> character.
 build_failure_lines <- function(errors) {
   out <- character()
   for (item in errors) {
     if (!identical(item$message, "install failed")) next
-    status <- exit_status_text(attr(item$output, "status"))
-    out <- c(out, if (length(item$output) == 0) {
-      sprintf("ERROR: building package '%s' printed nothing and installed nothing (exit status %s)", item$package, status)
-    } else {
-      sprintf("ember: building package '%s' failed with exit status %s", item$package, status)
-    })
+    status <- attr(item$output, "status")
+    if (length(item$output) == 0) {
+      out <- c(out, sprintf("ERROR: building package '%s' printed nothing and installed nothing (exit status %s)",
+                            item$package, exit_status_text(status)))
+    } else if (!is.null(status)) {
+      out <- c(out, sprintf("ember: building package '%s' failed with exit status %s", item$package, exit_status_text(status)))
+    }
   }
   out
 }
@@ -353,14 +358,16 @@ exit_status_text <- function(status) {
 }
 
 #' Run in the installer before renv: has renv's report of failed packages
-#' (`renv_graph_install_errors()`) print `build_failure_lines()` first.
+#' (`renv_graph_install_errors()`) print `build_failure_lines()` first;
+#' an error there is dropped, so renv's own report always follows.
 #' `FALSE` when this renv has no such function, so a renv that reports
 #' differently still installs; test-install-checks.R checks the installed
 #' renv has it.
 trace_renv_build_failures <- function(ns = asNamespace("renv")) {
   if (!exists("renv_graph_install_errors", envir = ns, inherits = FALSE)) return(FALSE)
   suppressMessages(trace("renv_graph_install_errors", where = ns, print = FALSE,
-                         tracer = quote(writeLines(ember:::build_failure_lines(errors)))))
+                         tracer = quote(tryCatch(suppressWarnings(writeLines(ember:::build_failure_lines(errors))),
+                                                 error = function(e) NULL))))
   TRUE
 }
 

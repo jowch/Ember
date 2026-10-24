@@ -865,7 +865,9 @@ test_that("build_failure_lines() gives each failed build's exit status, and a re
   errors <- list(list(package = "a", message = "install failed", output = silent),
                  list(package = "b", message = "install failed", output = loud),
                  list(package = "c", message = "install failed", output = character()),
-                 list(package = "d", message = "failed to download"))
+                 list(package = "d", message = "failed to download"),
+                 # renv's own words, with no exit status: a worker that timed out.
+                 list(package = "e", message = "install failed", output = "worker process timed out"))
   expect_equal(build_failure_lines(errors), c(
     "ERROR: building package 'a' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
     "ember: building package 'b' failed with exit status 1",
@@ -898,4 +900,10 @@ test_that("the installed renv reports failed packages through the function the i
   expect_length(first, 1L)
   expect_lt(first, grep("toyC]: install failed", out, fixed = TRUE))
   expect_match(out[[first]], "ERROR: building package 'toyC' printed nothing and installed nothing (exit status 5)", fixed = TRUE)
+  # An error in the traced lines (a status that isn't a number) never
+  # stops renv's own report.
+  expect_error(suppressWarnings(build_failure_lines(list(list(package = "x", message = "install failed",
+                                                              output = structure(character(), status = "?"))))))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(list(list(package = "x", message = "install failed", output = structure(character(), status = "?"))), "x", list()))
+  expect_true(any(grepl("not installed successfully", out, fixed = TRUE)))
 })
