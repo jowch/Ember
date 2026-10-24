@@ -111,11 +111,15 @@ main <- function(plan_path) {
   # renv's own report goes to stdout, for the session's log, and to a file
   # too, so the installer can read which downloads failed (#478).
   restore_log <- tempfile("ember-restore-", fileext = ".log")
+  # Each restore names these repositories itself. Without them renv uses
+  # its `renv.config.repos.override` option first, which renv sets when it
+  # loads under R CMD check and its version isn't CRAN's current one: then
+  # it restores from CRAN and its own copy, and finds no lock package.
   restore <- function() {
     sink(restore_log, split = TRUE)
     on.exit(sink())
     tryCatch(withCallingHandlers(
-      renv::restore(lockfile = lockfile_tmp, library = plan$staging,
+      renv::restore(lockfile = lockfile_tmp, library = plan$staging, repos = repos,
                     project = project_dir, prompt = FALSE, clean = FALSE),
       message = function(m) invokeRestart("muffleMessage")),
       error = function(e) e)
@@ -166,7 +170,7 @@ main <- function(plan_path) {
     renv::lockfile_write(lf, file = lockfile_tmp)
     again <- tryCatch(withCallingHandlers(
       renv::restore(lockfile = lockfile_tmp, library = plan$staging, packages = wrong,
-                    project = project_dir, prompt = FALSE, clean = FALSE),
+                    repos = repos, project = project_dir, prompt = FALSE, clean = FALSE),
       message = function(m) invokeRestart("muffleMessage")),
       error = function(e) e)
     if (inherits(again, "error")) {
