@@ -397,8 +397,12 @@ export const Cell = ({
         if (e.target.closest("a, button, summary, input, label, select, textarea")) return
         clearTimeout(text_click_timer.current ?? undefined)
         if (e.detail > 1 || !(window.getSelection()?.isCollapsed ?? true)) return
+        // Focus moving anywhere in the meantime (another cell, the Help box)
+        // is the person moving on: opening then would focus the source and
+        // take the keys they're typing there (#110).
+        const focused = document.activeElement
         text_click_timer.current = setTimeout(() => {
-            if (window.getSelection()?.isCollapsed ?? true) set_text_open(true)
+            if ((window.getSelection()?.isCollapsed ?? true) && document.activeElement === focused) set_text_open(true)
         }, TEXT_CLICK_MS)
     }
     const was_text_open = useRef(false)
