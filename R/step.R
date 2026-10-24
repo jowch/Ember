@@ -572,7 +572,27 @@ run_message <- function(state, id, token) {
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
       inputs = if (!is_text) run_inputs(state, id),
       installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
-      data = if (!is_text) run_data_files(state, id))
+      data = if (!is_text) run_data_files(state, id),
+      data_writes = if (!is_text) run_data_writes(state, id))
+}
+
+#' The writes part of a run message: each top-level expression that
+#' writes a file (`data_touch`), with the path resolved as in
+#' `run_data_files()`, or no `full` for a path that isn't text, which may
+#' be any file. The worker counts a change these expressions make to a
+#' file the run reads as the cell's own, for the files it learns as they
+#' are read as well as the ones the code names. `NULL` when it writes none.
+run_data_writes <- function(state, id) {
+  touch <- state$graph$analyses[[id]]$data_touch
+  if (is.null(touch)) return(NULL)
+  touch <- touch[!touch$read, , drop = FALSE]
+  if (nrow(touch) == 0) return(NULL)
+  dir <- dirname(state$path %||% ".")
+  lapply(seq_len(nrow(touch)), function(k) {
+    p <- touch$path[[k]]
+    c(list(index = touch$index[[k]]),
+      if (!is.na(p)) list(full = if (is_absolute_path(p)) p else file.path(dir, p)))
+  })
 }
 
 #' The data part of a run message (#276): for each file the cell reads,
@@ -2241,6 +2261,10 @@ reduce_wk_done <- function(state, event) {
   # such a change right after one that did leaves the result as it is, so
   # it doesn't loop.
   result$data_seen <- report$data_seen %||% list()
+  # The readers it called with something that names no file Ember can
+  # watch (the worker's data_learn()), for the cell's note.
+  unresolved <- as.character(unlist(report$data_unresolved %||% character()))
+  if (length(unresolved) > 0) result$data_unresolved <- unresolved
   outside <- as.character(report$data_changed %||% character())
   if (length(outside) > 0) {
     result$data_changed <- outside

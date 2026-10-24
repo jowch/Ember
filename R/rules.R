@@ -97,8 +97,10 @@ untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
 #' Functions that read a data file, each with the argument that names it
 #' (#276). A literal path there is watched as a `source()` path is: when
 #' the file changes, the cell and its dependents rerun or go stale. Any
-#' other value gets an `untracked_file` note. The argument is taken by
-#' name (or as `file`, which `fread()` also takes), or else as the first
+#' other value is learned when the call runs: inst/worker.R traces these
+#' same readers (`data_reader_args`, by package, which a test keeps equal
+#' to this list) and base R's connections. The argument is taken by name
+#' (or as `file`, which `fread()` also takes), or else as the first
 #' unnamed one.
 data_readers <- c(
   # base and utils

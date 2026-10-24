@@ -556,6 +556,7 @@ run_cell <- function(msg) {
     if (!is.null(dev)) close_device(dev)
     if (!is.null(console)) console$finish()
     running <<- NULL
+    data_run <<- NULL
   })
 
   tryCatch({
@@ -611,7 +612,7 @@ run_cell <- function(msg) {
     if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
                                  srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
-    watch_data <- data_watch_start(msg$data)
+    data_run <<- data_watch_start(msg$data, msg$data_writes)
     dt_before <- datatable_before(before, unlist(owned, use.names = FALSE), if (is_text) text_lines else exprs)
 
     tryCatch(
@@ -619,6 +620,7 @@ run_cell <- function(msg) {
         if (is_text) {
           for (li in seq_along(text_lines)) {
             at <- li
+            assign("at", li, envir = data_run)
             line_exprs <- parse(text = text_lines[[li]], keep.source = TRUE)
             # A line can hold more than one expression (`` `r a <- 2; a *
             # 3` ``, as knitr allows); all of them run, in order, and the
@@ -645,8 +647,9 @@ run_cell <- function(msg) {
               next
             }
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
+            assign("at", k, envir = data_run)
             r <- withVisible(eval(exprs[[k]], globalenv()))
-            watch_data <- data_watch_step(watch_data, k)
+            data_watch_step(data_run, k)
             # A bound input's value changes without the cell rerunning, so
             # it isn't shown as the assigned value (design.md, "Which
             # values a cell shows"); the widget will be.
@@ -768,9 +771,14 @@ run_cell <- function(msg) {
     # "interrupted" with the bookkeeping done.
     # The expression that stopped the run (an error or an interrupt) had
     # its change, if any, counted here.
-    watch_data <- data_watch_step(watch_data, at)
-    rc$data_seen <- watch_data$seen
+    # The files the run read are in its watch list (data_learn()); what
+    # its value's display reads afterwards isn't the cell's data.
+    watch_data <- data_run
+    data_watch_step(watch_data, at)
+    data_run <<- NULL
+    rc$data_seen <- data_watch_seen(watch_data)
     rc$data_changed <- watch_data$changed
+    rc$data_unresolved <- watch_data$unresolved
     trace_line("evaluated", msg$cell, rc$status)
     uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
@@ -939,19 +947,43 @@ run_cell <- function(msg) {
 #' A data file's version (#276), as the server's shell.R data_signature()
 #' writes it: modified time and size, or "missing".
 data_signature <- function(full) {
-  info <- tryCatch(file.info(full), error = function(e) NULL)
-  if (is.null(info) || is.na(info$mtime)) return("missing")
-  sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+  info <- tryCatch(file.info(full, extra_cols = FALSE), error = function(e) NULL)
+  if (is.null(info)) return(rep("missing", length(full)))
+  ifelse(is.na(info$mtime), "missing", sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size)))
 }
 
 #' The data files a run watches (#276; the run message's `data`): each
-#' one's version before the cell's code runs. `NULL` when it reads none.
-data_watch_start <- function(files) {
-  if (length(files) == 0) return(NULL)
-  paths <- vapply(files, function(f) f$path, character(1))
-  list(files = files,
-       seen = stats::setNames(lapply(files, function(f) data_signature(f$full)), paths),
-       changed = character())
+#' one's version before the cell's code runs. The run adds the files it
+#' reads that the message didn't name (`data_learn()`), so the list can
+#' start empty. `writes` is the message's `data_writes`: the expressions
+#' the code writes a file in, each with its `full` path, or none for a path
+#' that isn't text, which may be any file the run learns.
+#'
+#' An environment, changed in place: a run that reads thousands of files
+#' would otherwise copy the whole list on each read. `files` maps each
+#' file's name (`path`) to `list(path, full, touch)`, `seen` to its
+#' version, `canon` maps its resolved path to its name, and `raw` each
+#' path string a reader was given to the expression it was last read in.
+data_watch_start <- function(files, writes = list()) {
+  run <- new.env(parent = emptyenv())
+  run$files <- new.env(parent = emptyenv())
+  run$seen <- new.env(parent = emptyenv())
+  run$canon <- new.env(parent = emptyenv())
+  run$raw <- new.env(parent = emptyenv())
+  run$conns <- new.env(parent = emptyenv())
+  for (f in as.list(files)) {
+    run$files[[f$path]] <- f
+    run$seen[[f$path]] <- data_signature(f$full)
+    run$canon[[data_canon(f$full)]] <- f$path
+  }
+  run$writes <- lapply(writes, function(w) list(full = if (!is.null(w$full)) data_canon(w$full), index = as.integer(w$index)))
+  run$changed <- character()
+  run$unresolved <- character()
+  run$sourced <- character()
+  run$at <- 0L
+  run$home <- paste0(sub("/+$", "", data_canon(settings_base$wd %||% getwd())), "/")
+  run$skip <- data_skip_dirs()
+  run
 }
 
 #' After top-level expression `k`: a data file whose version changed
@@ -959,17 +991,252 @@ data_watch_start <- function(files) {
 #' itself doesn't read or write, was changed by someone else while the
 #' cell held what it read (#276). A change before the cell reads the file
 #' is read with it.
-data_watch_step <- function(data, k) {
-  if (is.null(data) || length(k) != 1 || k < 1) return(data)
-  for (f in data$files) {
-    now <- data_signature(f$full)
-    if (!identical(now, data$seen[[f$path]])) {
+data_watch_step <- function(run, k) {
+  if (is.null(run) || length(k) != 1 || k < 1) return(invisible())
+  keys <- ls(run$files, all.names = TRUE, sorted = FALSE)
+  if (length(keys) == 0) return(invisible())
+  files <- mget(keys, envir = run$files)
+  # One file.info() for all of them: a run can read thousands.
+  sigs <- data_signature(vapply(files, `[[`, "", "full"))
+  for (i in seq_along(keys)) {
+    key <- keys[[i]]
+    f <- files[[i]]
+    now <- sigs[[i]]
+    if (!identical(now, run$seen[[key]])) {
       touch <- as.integer(unlist(f$touch))
-      if (length(touch) && k > min(touch) && !(k %in% touch)) data$changed <- union(data$changed, f$path)
-      data$seen[[f$path]] <- now
+      if (length(touch) && k > min(touch) && !(k %in% touch)) run$changed <- union(run$changed, key)
+      run$seen[[key]] <- now
     }
   }
-  data
+  invisible()
+}
+
+#' The versions a run ended with, by file name, for the report's
+#' `data_seen`; `NULL` when it read none.
+data_watch_seen <- function(run) {
+  keys <- ls(run$seen, all.names = TRUE, sorted = TRUE)
+  if (length(keys) == 0) return(NULL)
+  mget(keys, envir = run$seen)
+}
+
+#' The run's watch list while a cell runs (`data_watch_start()`), for the
+#' reads `data_learn()` records; `NULL` between runs.
+data_run <- NULL
+
+#' A path with its folder and links resolved and "/" between parts, for
+#' telling two spellings of one file apart.
+data_canon <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
+
+#' The folders whose files are R's or the session's, not the notebook's
+#' data: the libraries (a package reading its own files), R itself, and
+#' the worker's own tempdir(). Each ends in "/".
+data_skip_dirs <- function() {
+  paste0(sub("/+$", "", unique(data_canon(c(.libPaths(), R.home(), tempdir())))), "/")
+}
+
+#' The data readers the worker watches as they run, each with the argument
+#' that names the file: rules.R's `data_readers`, by the package they come
+#' from (a test checks the two lists agree). Base R's and utils' open a
+#' path they are given with `file()` or `gzfile()`, whose hooks see it, and
+#' read.table() and the readers built on it check a connection with
+#' `isOpen()`, which is hooked too. Of the rest, `data_base_hooked` are
+#' hooked themselves, for a connection made earlier (`readLines(con)`).
+#' A body with a loop isn't: run uncompiled, R compiles its loops on every
+#' call (about 0.4 ms for read.table()), and compiling the hooked copy
+#' when the worker starts would cost about 0.3 s. `read.dcf()` and
+#' `scan()` given such a connection aren't seen.
+data_reader_args <- list(
+  base = c(readRDS = "file", load = "file", readLines = "con", scan = "file", read.dcf = "file"),
+  utils = c(read.csv = "file", read.csv2 = "file", read.delim = "file", read.delim2 = "file",
+            read.table = "file", read.fwf = "file"),
+  readr = c(read_csv = "file", read_csv2 = "file", read_tsv = "file", read_delim = "file",
+            read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
+            read_rds = "file"),
+  vroom = c(vroom = "file"),
+  data.table = c(fread = "input"),
+  readxl = c(read_excel = "path", read_xlsx = "path", read_xls = "path"),
+  arrow = c(read_parquet = "file", read_feather = "file", read_ipc_file = "file", read_csv_arrow = "file"),
+  haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
+  jsonlite = c(read_json = "path"))
+
+#' The readers that open their path through a connection, the connections
+#' whose file Ember can watch, and the classes that read no file (text, a
+#' URL, a command's output, a socket).
+data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
+data_base_hooked <- c("readLines", "readRDS", "load")
+data_file_classes <- c("file", "gzfile", "bzfile", "xzfile", "zstdfile", "unz")
+data_no_file_classes <- c("textConnection", "rawConnection", "url", "url-libcurl", "url-wininet",
+                          "pipe", "fifo", "sockconn", "servsockconn", "terminal")
+
+#' A file the running cell opens or reads (hooked: `file()` and the other
+#' connections in `data_file_classes`, and each of `data_reader_args`).
+#' `value` is the path argument as the call has it: a path or several,
+#' or a connection. `reader` is the reader's name, or `NULL` for a
+#' connection; `mode` the connection's open mode.
+#'
+#' A file read for the first time joins the run's watch list with the
+#' version it had then and the expression reading it, as a file the
+#' message named would (`data_watch_step()`), so a change by someone else
+#' after the read makes the result stale. A write (a connection opened
+#' "w" or "a") is the cell's own: it adds the expression to the touch of a
+#' file the run already watches, and watches nothing new. Text, URLs and
+#' files under `data_skip_dirs()` are skipped, and so is a file the run is
+#' sourcing, which Ember already watches. A reader whose argument is
+#' neither a path nor a known connection goes in `unresolved`, for the
+#' note that Ember can't tell which file it read.
+data_learn <- function(value, reader = NULL, mode = "r") {
+  run <- data_run
+  if (is.null(run) || is.null(running) || length(load_stack) > 0) return(invisible())
+  write <- startsWith(mode, "w") || startsWith(mode, "a")
+  # The common case first: the same path read again in this expression.
+  if (!write && is.character(value) && length(value) == 1 && !is.na(value) && nzchar(value) &&
+      identical(run$raw[[value]], run$at)) return(invisible())
+  paths <- character()
+  if (inherits(value, "connection")) {
+    cls <- tryCatch(class(value)[1], error = function(e) "")
+    if (cls %in% data_file_classes) {
+      paths <- tryCatch(summary(value)$description, error = function(e) character())
+    } else if (!(cls %in% data_no_file_classes) && !is.null(reader)) {
+      run$unresolved <- union(run$unresolved, reader)
+    }
+  } else if (is.character(value)) {
+    # readr's I("a,b\n1,2") and fread's text with a newline are data.
+    if (inherits(value, "AsIs")) return(invisible())
+    paths <- value
+  } else if (!is.null(reader) && !is.null(value)) {
+    run$unresolved <- union(run$unresolved, reader)
+  }
+  paths <- paths[!is.na(paths) & nzchar(paths) & !(paths %in% c("stdin", "clipboard")) &
+                 !grepl("\n", paths, fixed = TRUE) &
+                 !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", paths)]
+  for (p in unique(paths)) {
+    if (!write) run$raw[[p]] <- run$at
+    full <- data_canon(p)
+    key <- run$canon[[full]]
+    if (!is.null(key)) {
+      f <- run$files[[key]]
+      if (!(run$at %in% f$touch)) {
+        f$touch <- sort(c(as.integer(unlist(f$touch)), run$at))
+        run$files[[key]] <- f
+      }
+      next
+    }
+    if (write || full %in% run$sourced || any(startsWith(full, run$skip))) next
+    info <- tryCatch(file.info(full, extra_cols = FALSE), error = function(e) NULL)
+    if (is.null(info) || isTRUE(info$isdir)) next
+    # A missing file is watched only when a connection was opened to read
+    # it: then the cell reruns once it appears. A package reader's missing
+    # "path" may be a command or data (fread("grep x f.csv")).
+    if (is.na(info$mtime) && (!is.null(reader) || !startsWith(mode, "r"))) next
+    key <- if (startsWith(full, run$home)) substring(full, nchar(run$home) + 1L) else full
+    touch <- run$at
+    for (w in run$writes) if (is.null(w$full) || identical(w$full, full)) touch <- c(touch, w$index)
+    touch <- sort(unique(touch))
+    run$files[[key]] <- list(path = key, full = full, touch = touch)
+    run$seen[[key]] <- if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+    run$canon[[full]] <- key
+  }
+  invisible()
+}
+
+#' Hook for the connections in `data_file_classes`, called first in each
+#' (`hook_function()`) with its `description` and `open`.
+ember_data_conn <- function(description, open = "") {
+  if (is.null(data_run)) return(invisible())
+  data_learn(description, mode = if (is.character(open) && length(open) == 1) open else "")
+}
+
+#' Hook for `isOpen()`, which read.table() calls on a connection it is
+#' given before reading: the connection's file is read, or written for a
+#' `rw` of "w…".
+ember_data_isopen <- function(con, rw = "") {
+  run <- data_run
+  if (is.null(run) || !inherits(con, "connection")) return(invisible())
+  mode <- if (is.character(rw) && length(rw) == 1) rw else ""
+  id <- paste0(as.integer(con), mode)
+  if (identical(run$conns[[id]], run$at)) return(invisible())
+  run$conns[[id]] <- run$at
+  data_learn(con, mode = mode)
+}
+
+#' Hook for reader `name`, called first in it with the argument that names
+#' its file (`value`, missing when the call doesn't give it). Forcing it
+#' here forces it as the reader would at once; an error is the call's own.
+ember_data_read <- function(name, value) {
+  run <- data_run
+  if (is.null(run) || missing(value)) return(invisible())
+  if (inherits(value, "connection")) {
+    # read.table() calls scan() on its connection several times: a
+    # connection already looked at in this expression is skipped by its
+    # number. A number used again after a close names a connection made
+    # since, which file()'s hook saw.
+    id <- as.character(as.integer(value))
+    if (identical(run$conns[[id]], run$at)) return(invisible())
+    run$conns[[id]] <- run$at
+  } else if (is.character(value) && name %in% data_connection_readers) {
+    # A base reader opens a path it is given with file() or gzfile(),
+    # whose hook sees it.
+    return(invisible())
+  }
+  data_learn(value, reader = name)
+}
+
+#' `fun` with `hook` run first in its body, in its own environment, so
+#' the hook sees the call's arguments. Not `trace()`: its `.doTrace()`
+#' wrapper costs about 8 µs a call, more than a small file read's
+#' bookkeeping, and every base reader opens a connection.
+hook_function <- function(fun, hook) {
+  b <- body(fun)
+  rest <- if (is.call(b) && identical(b[[1]], as.name("{"))) as.list(b)[-1] else list(b)
+  out <- fun
+  body(out) <- as.call(c(as.name("{"), list(hook), rest))
+  out
+}
+
+#' Put a hooked `name` in place of the one in `env`, and in the attached
+#' package's environment when it is there, which holds a copy.
+replace_binding <- function(env, name, value, pkg = NULL) {
+  envs <- list(env)
+  if (!is.null(pkg) && paste0("package:", pkg) %in% search()) envs <- c(envs, list(as.environment(paste0("package:", pkg))))
+  for (target in envs) {
+    if (!exists(name, envir = target, inherits = FALSE)) next
+    locked <- bindingIsLocked(name, target)
+    if (locked) unlockBinding(name, target)
+    assign(name, value, envir = target)
+    if (locked) lockBinding(name, target)
+  }
+}
+
+#' Hook the readers `pkg` exports (`data_reader_args`), once its namespace
+#' is loaded.
+hook_data_readers <- function(pkg) {
+  ns <- if (identical(pkg, "base")) baseenv() else tryCatch(asNamespace(pkg), error = function(e) NULL)
+  if (is.null(ns)) return(invisible())
+  spec <- data_reader_args[[pkg]]
+  if (identical(pkg, "base")) spec <- spec[names(spec) %in% data_base_hooked]
+  if (identical(pkg, "utils")) spec <- spec[0]
+  for (name in names(spec)) {
+    fun <- get0(name, envir = ns, inherits = FALSE)
+    if (!is.function(fun) || is.primitive(fun) || !(spec[[name]] %in% names(formals(fun)))) next
+    hook <- bquote((.(ember_data_read))(.(name), .(as.name(spec[[name]]))))
+    tryCatch(replace_binding(ns, name, hook_function(fun, hook), pkg), error = function(e) NULL)
+  }
+  invisible()
+}
+
+#' Hook the connections and every reader in `data_reader_args`: base R's
+#' now, a package's when its namespace loads.
+install_data_traces <- function() {
+  for (name in intersect(data_file_classes, ls(baseenv()))) {
+    hook <- bquote((.(ember_data_conn))(description, open))
+    replace_binding(baseenv(), name, hook_function(get(name, envir = baseenv()), hook))
+  }
+  replace_binding(baseenv(), "isOpen", hook_function(isOpen, bquote((.(ember_data_isopen))(con, rw))))
+  for (pkg in names(data_reader_args)) {
+    if (identical(pkg, "base") || isNamespaceLoaded(pkg)) hook_data_readers(pkg)
+    else setHook(packageEvent(pkg, "onLoad"), local({ p <- pkg; function(...) hook_data_readers(p) }))
+  }
+  invisible()
 }
 
 #' Remove a cell's globals and display data (before a rerun, or on delete).
@@ -2462,6 +2729,7 @@ install_traces <- function() {
   source_call <- bquote((.(ember_trace_source))())
   trace(base::source, where = base_env, print = FALSE, tracer = source_call)
   trace(sys.source, where = base_env, print = FALSE, tracer = source_call)
+  install_data_traces()
   trace(registerS3method, where = base_env, print = FALSE,
         tracer = bquote((.(ember_trace_s3_method))()))
   # On exit, for the environment attach() returns, named as it's on the
@@ -2584,6 +2852,8 @@ trace_source <- function(file) {
   trace_line("source", file)
   path <- tryCatch(normalizePath(file, mustWork = FALSE), error = function(e) as.character(file))
   if (in_session_tempdir(path)) return(invisible())
+  # Ember watches it as a sourced file, not as the run's data.
+  if (!is.null(data_run)) assign("sourced", union(data_run$sourced, data_canon(path)), envir = data_run)
   text <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"), error = function(e) NA_character_)
   send(list(type = "source", cell = running$cell, token = running$token, path = path, text = text))
   reply <- NULL

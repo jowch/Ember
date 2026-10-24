@@ -240,9 +240,15 @@ after each dispatch.
   (#276). The shell keeps them in `nb$data_watch`, apart from sourced
   files, and dispatches `data_changed` with each changed path's version
   (`data_signature()`: modified time and size). The run message's `data`
-  lists the cell's files with the expressions that touch them; the worker
-  reports the versions the run ended with (`data_seen`, kept on the
-  result) and the files someone else changed during it (`data_changed`).
+  lists the cell's literal-path files with the expressions that touch
+  them, and `data_writes` the expressions that write. The worker adds each
+  file the run reads by any other path as the read happens
+  (`data_learn()`, from traces on the file connections and the
+  `data_reader_args` readers), and reports the versions the run ended with
+  (`data_seen`, kept on the result; the shell watches every path there),
+  the files someone else changed during it (`data_changed`), and the
+  readers it gave something naming no file (`data_unresolved`, the cell's
+  `untracked_files` note).
   `reduce_data_changed` skips a reader that saw the new version, or that
   is queued or running. The shell checks the files on its poll and again
   just before it queues a run's `wk_done` (`check_data_files()`), so a
