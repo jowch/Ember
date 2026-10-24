@@ -1576,7 +1576,12 @@ sync_data_watch <- function(nb, paths) {
   old <- names(nb$data_watch)
   for (p in setdiff(paths, old)) {
     if (is_listing_key(p)) {
-      nb$data_watch[[p]] <- data_listing_watch(p)
+      w <- data_listing_watch(p)
+      # The version the run ended with: a change since it ended counts,
+      # found by the next poll, which lists again while the watch is new.
+      seen <- listing_seen(nb$state, p)
+      if (!is.null(seen)) w$sig <- seen
+      nb$data_watch[[p]] <- w
       next
     }
     info <- data_file_info(resolve_source_path(nb, p))
@@ -1635,19 +1640,37 @@ data_listing_signature <- function(key) {
 #' signature. Adding, removing or renaming a file changes its folder's
 #' time, so the poll lists again only when one moved: listing 20,000
 #' files takes about 140 ms, checking one folder's time well under 1 ms.
-#' `racy`: a folder changed within 2 s of the listing, so a change in the
-#' same tick of a coarse clock (FAT's 2 s, HFS+'s 1 s) would leave its
-#' time as it is; the poll lists again until that's no longer so, as git
-#' does for its index.
-data_listing_watch <- function(key) {
+#'
+#' Times are this machine's clock (`Sys.time()`), never compared with a
+#' folder's, which on a network drive is the server's. `seen_at` is when
+#' the poll first saw the folders' current times: for 2 s after it, a
+#' second change in the same tick of a coarse clock (FAT's 2 s, HFS+'s
+#' 1 s) would leave them as they are, so the poll lists again until then,
+#' as git does for its index. And it lists again every `every` seconds
+#' whatever the times say (10 s, or 100 times the listing's own time,
+#' whichever is longer): a file system that doesn't move a folder's time
+#' when its entries change still has its change found.
+data_listing_watch <- function(key, seen_at = as.numeric(Sys.time())) {
   f <- strsplit(key, "\n", fixed = TRUE)[[1]]
   path <- f[[2]]
   recursive <- strsplit(f[[3]], " ", fixed = TRUE)[[1]][[2]] == "1"
+  start <- as.numeric(Sys.time())
   dirs <- if (recursive && dir.exists(path)) unique(c(path, list.dirs(path, full.names = TRUE))) else path
-  listed_at <- as.numeric(Sys.time())
   mtimes <- folder_mtimes(dirs)
-  list(dirs = dirs, mtimes = mtimes, sig = data_listing_signature(key),
-       racy = any(mtimes > listed_at - 2, na.rm = TRUE))
+  sig <- data_listing_signature(key)
+  listed_at <- as.numeric(Sys.time())
+  list(dirs = dirs, mtimes = mtimes, sig = sig, seen_at = seen_at,
+       listed_at = listed_at, every = max(10, 100 * (listed_at - start)))
+}
+
+#' The signature a result's run saw for listing `key` (its `data_seen`),
+#' or `NULL` when none did.
+listing_seen <- function(state, key) {
+  for (r in state$results) {
+    s <- .subset2(.subset2(r, "data_seen"), key)
+    if (is.character(s) && length(s) == 1) return(s)
+  }
+  NULL
 }
 
 #' Folders' modified times as numbers, `NA` for one that isn't there: one
@@ -1659,7 +1682,8 @@ folder_mtimes <- function(dirs) {
 
 #' The listings among the watched keys whose names changed (#514), by key
 #' to their new signature, for `check_data_files()`. A listing whose
-#' folders' times moved, or that was racy, is listed again; only a new
+#' folders' times moved is listed again, as is one within 2 s of its
+#' `seen_at` or past its `every` (`data_listing_watch()`); only a new
 #' signature is a change, so a file the listing wouldn't return (an Excel
 #' lock file beside the CSVs) reruns nothing.
 check_data_listings <- function(nb, listings) {
@@ -1673,8 +1697,10 @@ check_data_listings <- function(nb, listings) {
     n <- length(dirs[[i]])
     m <- now[at + seq_len(n)]
     at <- at + n
-    if (!isTRUE(w$racy) && identical(m, w$mtimes)) next
-    fresh <- data_listing_watch(k)
+    same <- identical(m, w$mtimes)
+    t <- as.numeric(Sys.time())
+    if (same && t > w$seen_at + 2 && t <= w$listed_at + w$every) next
+    fresh <- data_listing_watch(k, seen_at = if (same) w$seen_at else t)
     nb$data_watch[[k]] <- fresh
     if (!identical(fresh$sig, w$sig)) changed[[k]] <- fresh$sig
   }

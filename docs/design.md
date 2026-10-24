@@ -454,10 +454,16 @@ before the cell runs.
   or removed, and not when another file there changes, such as the lock
   file Excel writes beside a workbook it opens. The listing's version is
   taken as the run ends, so files the cell writes there itself don't wake
-  it. The engine lists the folder again only when its modified time moves
-  (with `recursive`, any folder under it): about 140 ms for 20,000 files,
-  against well under 1 ms to check the time. `Sys.glob()`,
-  `list.dirs()` and `fs::dir_ls()` aren't watched yet.
+  it, and the worker lists each such folder once more then: about 140 ms
+  for 20,000 files. The engine lists the folder again only when its
+  modified time moves (with `recursive`, any folder under it), checking
+  the time in well under 1 ms. It also lists again for 2 s after a move,
+  since a coarse clock (FAT's 2 s) can hide a second change in the same
+  tick, and every 10 s or 100 times the listing's own time, whichever is
+  longer, for a file system that doesn't move a folder's time. These
+  times are the engine's own clock, never a network drive's.
+  `Sys.glob()`, `list.dirs()` and `fs::dir_ls()` aren't watched yet
+  (#595).
 - The cost, measured in the worker on a cloud container, is about 15 µs
   for each read of a file the run already read and about 0.2 ms the first
   time (`lapply()` over 2000 small CSVs: 1.3 s, against 0.74 s in plain R).

@@ -229,12 +229,12 @@ test_that("autorun: a cell that lists a folder reruns when a file it lists appea
   listing <- function() Filter(is_listing_key, names(nb$data_watch))
   settle(nb, function(snap) length(listing()) == 1 && is_idle(snap))
 
-  # A lock file beside the CSVs: the poll lists the folder again, until its
-  # time is no longer racy, and nothing reruns.
+  # A lock file beside the CSVs: the poll lists the folder again, for 2 s
+  # after it sees the folder's new time, and nothing reruns.
   writeLines("lock", file.path(data, "~$book.xlsx"))
   seen <- function() {
     w <- nb$data_watch[[listing()]]
-    !isTRUE(w$racy) && identical(w$mtimes, folder_mtimes(w$dirs))
+    as.numeric(Sys.time()) > w$seen_at + 2 && identical(w$mtimes, folder_mtimes(w$dirs))
   }
   settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(runs(), 1L)
@@ -1326,38 +1326,76 @@ test_that("the poll leaves a file the running cell writes to the check at the ru
   expect_identical(running_writes(nb$state), character())
 })
 
-test_that("the poll lists a watched folder again only when its time moves, and reports only a new listing (#514)", {
+# A stand-in notebook watching one listing of its data/ folder, holding
+# a.csv. `pass()` moves the watch's clock 3 s back, as if that time had
+# passed since the poll saw the folder's time.
+listing_check_nb <- function() {
   nb <- data_check_nb()
-  data <- file.path(dirname(nb$file), "data")
-  dir.create(data)
-  writeLines("1", file.path(data, "a.csv"))
-  Sys.setFileTime(data, as.POSIXct("2026-01-01 00:00:00", tz = "UTC"))
-  key <- paste("list.files", data, "0 0 0 0 0 0", "csv$", sep = "\n")
-  expect_true(is_listing_key(key))
   nb$data_watch <- list()
+  nb$data <- file.path(dirname(nb$file), "data")
+  dir.create(nb$data)
+  writeLines("1", file.path(nb$data, "a.csv"))
+  nb$key <- paste("list.files", nb$data, "0 0 0 0 0 0", "csv$", sep = "\n")
+  nb$pass <- function() nb$data_watch[[nb$key]]$seen_at <- nb$data_watch[[nb$key]]$seen_at - 3
+  nb
+}
+
+test_that("the poll lists a watched folder again only when its time moves, and reports only a new listing (#514)", {
+  nb <- listing_check_nb()
+  key <- nb$key
+  expect_true(is_listing_key(key))
   sync_data_watch(nb, key)
-  expect_false(nb$data_watch[[key]]$racy)
   check_data_files(nb, nb$send)
   expect_length(nb$sent, 0)
+  nb$pass()
   # A file the listing doesn't return moves the folder's time, but isn't a change.
-  writeLines("lock", file.path(data, "~$book.xlsx"))
+  Sys.setFileTime(nb$data, as.POSIXct("2026-01-01 00:00:00", tz = "UTC"))
+  before <- nb$data_watch[[key]]$seen_at
+  writeLines("lock", file.path(nb$data, "~$book.xlsx"))
   check_data_files(nb, nb$send)
   expect_length(nb$sent, 0)
-  expect_true(nb$data_watch[[key]]$racy)
-  writeLines("2", file.path(data, "b.csv"))
+  expect_gt(nb$data_watch[[key]]$seen_at, before)
+  writeLines("2", file.path(nb$data, "b.csv"))
   check_data_files(nb, nb$send)
   expect_length(nb$sent, 1)
   expect_identical(nb$sent[[1]]$files[[key]], data_listing_signature(key))
   expect_match(nb$sent[[1]]$files[[key]], "^2 ")
-  # With the folders' times as recorded, and not racy, it isn't listed again.
+  # With the folder's time as recorded, 2 s on, it isn't listed again...
+  nb$pass()
   nb$data_watch[[key]]$sig <- "as recorded"
-  nb$data_watch[[key]]$racy <- FALSE
   nb$data_watch[[key]]$mtimes <- folder_mtimes(nb$data_watch[[key]]$dirs)
   check_data_files(nb, nb$send)
   expect_length(nb$sent, 1)
-  unlink(data, recursive = TRUE)
+  # ...until its `every` is up, for a file system that doesn't move it.
+  nb$data_watch[[key]]$listed_at <- nb$data_watch[[key]]$listed_at - nb$data_watch[[key]]$every - 1
   check_data_files(nb, nb$send)
-  expect_identical(nb$sent[[2]]$files[[key]], "missing")
+  expect_length(nb$sent, 2)
+  expect_identical(nb$sent[[2]]$files[[key]], data_listing_signature(key))
+  unlink(nb$data, recursive = TRUE)
+  check_data_files(nb, nb$send)
+  expect_identical(nb$sent[[3]]$files[[key]], "missing")
+})
+
+test_that("a folder whose time is ahead of this machine's clock is listed again only for 2 s (#514)", {
+  # A network drive's server clock may be minutes ahead.
+  nb <- listing_check_nb()
+  Sys.setFileTime(nb$data, Sys.time() + 3600)
+  sync_data_watch(nb, nb$key)
+  nb$pass()
+  nb$data_watch[[nb$key]]$sig <- "as recorded"
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 0)
+  expect_identical(nb$data_watch[[nb$key]]$sig, "as recorded")
+})
+
+test_that("a new listing watch starts from what the run saw, so a change since its end counts (#514)", {
+  nb <- listing_check_nb()
+  nb$state$results <- list(R = list(data_seen = stats::setNames(list("0 run-end"), nb$key)))
+  sync_data_watch(nb, nb$key)
+  expect_identical(nb$data_watch[[nb$key]]$sig, "0 run-end")
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  expect_identical(nb$sent[[1]]$files[[nb$key]], data_listing_signature(nb$key))
 })
 
 test_that("a recursive listing's watch covers the folders under it (#514)", {
