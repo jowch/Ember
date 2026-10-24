@@ -26,6 +26,6 @@ front-end's hook and `R_PolledEvents`. Input handlers (`addInputHandler()`,
 the `later` package) run only while R waits. The full reasoning and the
 checks are on #511.
 
-If CRAN asks, answer with the Writing R Extensions wording above. Until
-R 4.7.0 is the release, the r-release flavors on CRAN's check page will show
-this NOTE.
+If CRAN asks, answer with the Writing R Extensions wording above. The
+flavors on CRAN's check page that run R 4.6 will show this NOTE: r-release
+until R 4.7.0 comes out, and r-oldrel for a year after that.
