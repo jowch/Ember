@@ -565,8 +565,13 @@ Built from increment 2 (#20).
 - **Failures.** A GitHub lookup that fails stops resolution, as CRAN's
   index failing does: falling back to CRAN would install a different
   package. An `index_unavailable` row names the package, and running
-  retries. An entry that holds another package than its name gets a
-  `source` row and stops resolution the same way; one that isn't
+  retries. That holds for a package the notebook uses. An entry for one it
+  neither uses nor has locked (its install call deleted, say) is left out
+  instead, so its failure doesn't stop the rest; its row still shows. If
+  resolution meets the name anyway, as a dependency, it stops as before
+  (`idle_failed_sources()`, #519). A date preview does the same. An
+  entry that holds another package than its name gets a `source` row
+  and stops resolution the same way; one that isn't
   `github:user/repo[@ref]` gets a `source` row and is ignored. GitHub
   answers 404 for a private repository it wasn't shown a token for, and
   403 when its rate limit (60 requests an hour without a token) runs
