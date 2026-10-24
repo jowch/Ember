@@ -135,8 +135,7 @@ main <- function(plan_path) {
   # again. What installed stays.
   if (inherits(restored, "error")) {
     missing <- setdiff(names(wanted), list.files(plan$staging))
-    root <- Sys.getenv("RENV_PATHS_ROOT", file.path(plan$cache, "renv-root"))
-    bad <- ember:::unreadable_downloads(missing, root)
+    bad <- ember:::unreadable_downloads(missing, plan$downloads)
     undownloaded <- ember:::renv_download_failures(readLines(restore_log, warn = FALSE))
     if (length(bad) > 0 || length(undownloaded) > 0) {
       writeLines(c(sprintf("ember: %s couldn't be read (a download cut short); downloading it again", basename(bad)),
@@ -232,6 +231,8 @@ main <- function(plan_path) {
   manifest <- list(lock_lines = plan$lock_lines, r = plan$r, installed = installed,
                    exports = exports, cache_entries = cache_entries,
                    created = Sys.time())
+  # The install's own downloads (#616) aren't part of the library.
+  unlink(plan$downloads, recursive = TRUE)
   ember:::finish_library(plan$staging, plan$path, manifest)
 
   cat(sprintf("EMBER-PROGRESS %d %d - restore\n", total, total))

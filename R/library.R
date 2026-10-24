@@ -15,6 +15,9 @@
 #   worker/R-<x.y.z>-<md5 of worker.R>.Rc    the worker's compiled image
 #                                            (shell.R, ready_worker_image())
 #
+# renv downloads into each install's staging folder
+# (`<staging>/.ember-downloads`), not into renv-root (#616).
+#
 # Ember's own renv cache, not the user's: `ember::clean()` deletes cache
 # entries no Ember library uses, which must never touch the user's own renv
 # projects.
@@ -24,7 +27,10 @@
 # renamed into place; a rename that finds the target already there means
 # another process finished the same work, so the loser deletes its copy.
 # Both outcomes are the same library (per make-operations-idempotent).
-# renv's own cache writes use renv's locking.
+# renv's own cache writes use renv's locking. Its downloads don't, and
+# with one download folder another install could open an archive that was
+# still being written (#616). So each install downloads into its own
+# staging folder, and two installs of one package each download it.
 
 #' `path` with its nearest existing ancestor resolved by `normalizePath()`
 #' and the rest (components that don't exist yet) reattached as given.
@@ -966,7 +972,9 @@ renv_is_for_the_installer <- function() renv::restore
 #' * Runs with the server's own library (`R_LIBS` = the server's
 #'   `.libPaths()`), which is where renv is: renv is an Imports of ember, so
 #'   it is installed with ember and never enters a notebook's library.
-#' * `env`: `RENV_PATHS_CACHE`, `RENV_PATHS_ROOT` under `cache`,
+#' * `env`: `RENV_PATHS_CACHE`, `RENV_PATHS_ROOT` under `cache`;
+#'   `RENV_PATHS_SOURCE` and `RENV_PATHS_BINARY`, where renv downloads,
+#'   under the install's own staging folder (`downloads_dir()`, #616);
 #'   `RENV_CONFIG_PPM_ENABLED = TRUE` (renv rewrites a PPM URL to its Linux
 #'   binary form), `MAKEFLAGS = -j2` (increment 2 chooses a real core
 #'   count; increment 1's fixtures need no compiler at all).
@@ -992,8 +1000,10 @@ installer_command <- function(lock, repos, path, cache = cache_dir(), github = "
   # counter, not from R's own RNG (confirmed: it leaves `.Random.seed`
   # untouched).
   staging <- paste0(path, ".staging-", Sys.getpid(), "-", basename(tempfile()))
+  downloads <- downloads_dir(staging)
   plan <- list(lock_lines = format_lock_lines(lock), repos = repos, r = r_info(),
-              staging = staging, path = path, cache = cache, github = github, ask_above = ask_above)
+              staging = staging, path = path, cache = cache, github = github, ask_above = ask_above,
+              downloads = downloads)
   plan_path <- tempfile("ember-install-plan-", fileext = ".rds")
   saveRDS(plan, plan_path)
 
@@ -1003,10 +1013,20 @@ installer_command <- function(lock, repos, path, cache = cache_dir(), github = "
           R_LIBS_USER = "", R_LIBS_SITE = "",
           RENV_PATHS_CACHE = file.path(cache, "renv-cache"),
           RENV_PATHS_ROOT = file.path(cache, "renv-root"),
+          RENV_PATHS_SOURCE = file.path(downloads, "source"),
+          RENV_PATHS_BINARY = file.path(downloads, "binary"),
           RENV_CONFIG_PPM_ENABLED = "TRUE",
           MAKEFLAGS = "-j2")
   list(command = rscript, args = c("--vanilla", installer_script(), plan_path), env = env)
 }
+
+#' Where an install's renv downloads go: a folder in its staging folder,
+#' so no other install reads an archive it is still writing (#616). The
+#' leading dot keeps it out of `list.files()`, which is how the installer
+#' and `staging_link_targets()` list the packages; the installer removes
+#' it before the rename, and `clean()` removes it with a staging folder
+#' an install left.
+downloads_dir <- function(staging) file.path(staging, ".ember-downloads")
 
 #' Install a library and wait: for `ember::run()`, which runs outside any
 #' session and may block. The same installer, the same staging and rename,

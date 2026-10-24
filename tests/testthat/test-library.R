@@ -240,6 +240,22 @@ test_that("installer_command() doesn't perturb the server's own RNG state", {
   expect_identical(.Random.seed, before)
 })
 
+test_that("each install downloads into its own staging folder, not renv-root (#616)", {
+  lock <- new_lock("dplyr", "1.1.4", "CRAN")
+  cache <- tempfile("ember-cache-")
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- file.path(cache, "libraries", "x")
+  cmds <- lapply(1:2, function(i) installer_command(lock, c(CRAN = "https://example.invalid"), path, cache = cache))
+  for (cmd in cmds) {
+    plan <- readRDS(cmd$args[[length(cmd$args)]])
+    expect_identical(plan$downloads, file.path(plan$staging, ".ember-downloads"))
+    expect_identical(cmd$env[["RENV_PATHS_SOURCE"]], file.path(plan$downloads, "source"))
+    expect_identical(cmd$env[["RENV_PATHS_BINARY"]], file.path(plan$downloads, "binary"))
+  }
+  # Two installs of one lock at once don't share a download folder.
+  expect_false(identical(cmds[[1]]$env[["RENV_PATHS_SOURCE"]], cmds[[2]]$env[["RENV_PATHS_SOURCE"]]))
+})
+
 # ---- Jobs (62, 63) ----------------------------------------------------------
 
 test_that("two sessions asking for one index share one job and both get the event (62)", {
