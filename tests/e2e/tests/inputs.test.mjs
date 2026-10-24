@@ -34,13 +34,13 @@ const waitRan = (page, id, after = 0) =>
   page.waitForFunction(([id, after]) => {
     const r = window.editor_state?.notebook?.cell_results?.[id];
     return r != null && r.output.last_run_timestamp > after && !r.running && !r.queued;
-  }, [id, after], { timeout: 120000 });
+  }, [id, after]);
 const lastRun = (page, id) => page.evaluate((id) => window.editor_state.notebook.cell_results[id].output.last_run_timestamp, id);
 
 const output = (page, id) => page.locator(`${cellSelector(id)} pluto-output`).textContent();
 const waitOutput = (page, id, re) =>
   page.waitForFunction(([sel, src]) => new RegExp(src).test(document.querySelector(sel)?.textContent ?? ""),
-    [`${cellSelector(id)} pluto-output`, re.source], { timeout: 60000 });
+    [`${cellSelector(id)} pluto-output`, re.source]);
 
 test("inputs.R: an input on a cell's last line is its output widget, and moving it reruns its readers", async (t) => {
   const notebook = tempNotebook("inputs.R");
