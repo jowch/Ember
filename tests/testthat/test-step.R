@@ -87,7 +87,13 @@ test_that("a text cell's parse error names its inline span and points at the spa
   # A span left open: R reports the end of input, still on the span.
   v <- view_of("#' A\n#' Mean `r mean(c(1, 2)` done.")
   expect_equal(v$errors[[1]]$lines$line, 2L)
-  expect_match(v$errors[[1]]$message, "inline span `r mean(c(1, 2)` on line 2", fixed = TRUE)
+  expect_match(v$errors[[1]]$message, "inline span `r mean(c(1, 2)` on line 2: unexpected end of input", fixed = TRUE)
+
+  # An open span followed by another: the open one is blamed, not the
+  # next span R read on into (review).
+  v <- view_of("#' A `r mean(c(1, 2)`\n#'\n#' B `r 3` end")
+  expect_equal(v$errors[[1]]$lines$line, 1L)
+  expect_match(v$errors[[1]]$message, "inline span `r mean(c(1, 2)` on line 1: unexpected end of input", fixed = TRUE)
 })
 
 test_that("running a cell with a cycle, double definition or mixed text clears code_differs; an unrun edit keeps it", {
