@@ -34,22 +34,22 @@ jobs:
           R CMD build --no-manual .
           echo "build: $(( $(date +%s) - start )) s"
           ls -l ember_*.tar.gz
-      - name: "R CMD check --as-cran, NOT_CRAN unset, timed"
+      - name: Installed size with and without kept source
+        shell: bash
+        run: |
+          echo "R_KEEP_PKG_SOURCE=[${R_KEEP_PKG_SOURCE-unset}]"
+          Rscript -e 'cat("keep.source.pkgs:", getOption("keep.source.pkgs"), "\n")'
+          for keep in no yes; do
+            rm -rf lib-$keep && mkdir lib-$keep
+            R_KEEP_PKG_SOURCE=$keep R CMD INSTALL -l lib-$keep ember_*.tar.gz > install-$keep.log 2>&1 || tail -20 install-$keep.log
+            echo "== keep source: $keep"
+            du -sk lib-$keep/ember lib-$keep/ember/R lib-$keep/ember/frontend
+            ls -l lib-$keep/ember/R
+          done
+      - name: "R CMD check --as-cran --no-tests, R_KEEP_PKG_SOURCE unset"
         shell: bash
         env:
           _R_CHECK_CRAN_INCOMING_: "false"
-          _R_CHECK_LIMIT_CORES_: "true"
         run: |
-          unset NOT_CRAN GITHUB_PAT GITHUB_TOKEN EMBER_CHROMIUM
-          for v in $(env | grep -o '^EMBER_TEST_[A-Z_]*'); do unset $v; done
-          start=$(date +%s)
-          set +e
-          R CMD check --as-cran --no-manual --no-tests ember_*.tar.gz
-          code=$?
-          echo "== check: $(( $(date +%s) - start )) s, exit $code"
-          cat ember.Rcheck/00check.log
-          tail -40 ember.Rcheck/tests/testthat.Rout* 2>/dev/null
-          echo "== installed size by folder"
-          du -sk ember.Rcheck/ember ember.Rcheck/ember/* ember.Rcheck/ember/libs/* 2>/dev/null | sort -n
-          du -sk ember.Rcheck/ember/www/* ember.Rcheck/ember/frontend/* 2>/dev/null | sort -n | tail -20
-          exit 0
+          unset NOT_CRAN R_KEEP_PKG_SOURCE
+          R CMD check --as-cran --no-manual --no-tests ember_*.tar.gz | grep -A4 "installed package size"
