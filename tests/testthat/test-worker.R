@@ -57,6 +57,76 @@ test_that("run_value_and_console_order", {
   expect_identical(r$output$text, "[1] 2")
 })
 
+test_that("what a running cell prints is sent while it runs, a whole line at a time (#470)", {
+  # The cell prints, then waits on a file the test writes only once the
+  # printed line has arrived: before #470 nothing came until the run ended.
+  # Windows has no hook for this yet (#482): there the file is written at
+  # once, and the text comes at the message, as before.
+  streams <- .Platform$OS.type != "windows"
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  if (!streams) writeLines("", go)
+  code <- sprintf('cat("inside the loop\\n"); cat("half"); while (!file.exists(%s)) NULL; cat(" line\\n"); message("m")', deparse(go))
+  h$send(run_msg("a", 1L, code))
+  if (streams) {
+    repeat {
+      m <- next_frame(h)
+      expect_false(identical(m$type, "done"))
+      if (identical(m$type, "console")) break
+    }
+    expect_identical(m$item, list(kind = "stdout", text = "inside the loop\n"))
+    writeLines("", go)
+  }
+  r <- wait_for_done(h)
+  expect_identical(r$status, "ok")
+  # The unfinished line was held back, then sent whole, before the message.
+  stdout <- if (streams) list(list(kind = "stdout", text = "inside the loop\n"),
+                              list(kind = "stdout", text = "half line\n"))
+            else list(list(kind = "stdout", text = "inside the loop\nhalf line\n"))
+  expect_identical(r$console, c(stdout, list(list(kind = "message", text = "m\n"))))
+})
+
+test_that("a forked child doesn't send its parent's printed text again (#470)", {
+  # mclapply()'s children inherit the hook, the console file and the
+  # socket; only the worker may send. Unix only: Windows has no fork, and
+  # no hook (#482). Each child runs until the parent has sent the line.
+  skip_on_os("windows")
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  code <- sprintf('cat("before\\n"); invisible(parallel::mclapply(1:4, function(i) { while (!file.exists(%s)) NULL; i }, mc.cores = 2))', deparse(go))
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    writeLines("", go)
+  })
+  expect_identical(r$status, "ok", info = r$error$message)
+  # The children's copies would come as console frames of their own.
+  expect_identical(sent, list(list(kind = "stdout", text = "before\n")))
+  expect_identical(r$console, sent)
+})
+
+test_that("a line printed before a long Sys.sleep() is sent during the sleep (#470)", {
+  # R sleeps a wait in one go unless R_wait_usec is set, so the hook would
+  # run only when the sleep ends. The test stops the sleep once the line
+  # has arrived. Unix only: Windows has no hook yet (#482).
+  skip_on_os("windows")
+  h <- worker_harness()
+  on.exit(h$close())
+  h$send(run_msg("a", 1L, 'cat("before the sleep\\n"); Sys.sleep(3600)'))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    h$interrupt()
+  })
+  expect_identical(r$status, "interrupted")
+  expect_identical(sent, list(list(kind = "stdout", text = "before the sleep\n")))
+})
+
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -2444,7 +2514,9 @@ test_that("a value that prints many lines shows at once, and print() keeps every
 
   r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
   printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
-  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  # The page joins consecutive stdout items as they are; a long print can
+  # come in several, each ending at a line (#470).
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
   expect_identical(length(lines), 50000L)
   expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
 })

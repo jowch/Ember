@@ -121,6 +121,7 @@ Four layers. Most tests are in the first two and start no process.
 
 83. `hello_and_secret`
 84. `run_value_and_console_order`: `cat("a"); message("b"); warning("c"); 1 + 1` gives console items stdout, message and warning in that order, with output text `[1] 2`.
+    A cell that prints a line and then keeps running sends that line before it ends, and holds back an unfinished line until it is whole (#470).
 85. `earlier_visible_values_to_console`: `1; 2` gives output `2` and the console prints `1`.
 86. `error_with_traceback`: an error inside a function gives a traceback that ends at that function, with no worker frames.
 87. `rerun_removes_previous_globals`: a cell defines `x`, its code changes to define `y`, and after the rerun `x` is gone.
