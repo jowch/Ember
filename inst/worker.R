@@ -1082,7 +1082,10 @@ data_reader_args <- list(
   haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
   jsonlite = c(read_json = "path"),
   qs2 = c(qs_read = "file", qd_read = "file"),
-  xml2 = c(read_xml = "x", read_html = "x"))
+  xml2 = c(read_xml = "x", read_html = "x"),
+  # read_sf() takes `...` and calls st_read(), whose hook sees its file.
+  sf = c(st_read = "dsn", read_sf = "dsn"),
+  foreign = c(read.dta = "file", read.spss = "file", read.xport = "file"))
 
 #' The readers that open their path through a connection, the connections
 #' whose file Ember can watch, and the classes that read no file (text, a
@@ -1099,6 +1102,9 @@ data_reader_takes_file <- function(name, value) {
   switch(name,
     fread = !grepl(" ", value, fixed = TRUE),
     read_xml = , read_html = !grepl("<|>", value),
+    # GDAL's own names: a driver prefix ("PG:dbname=d") or a virtual file
+    # system ("/vsizip/a.zip/b.shp"). One letter and a colon is a drive.
+    st_read = !grepl("^[A-Za-z][A-Za-z0-9_]+:|^/vsi", value),
     TRUE)
 }
 data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
@@ -1237,6 +1243,26 @@ ember_data_read <- function(name, value, alt) {
     return(invisible())
   }
   data_learn(value, reader = name, always_file = always_file)
+  # A shapefile's other files are watched when it has them: one it lacks
+  # (often .cpg) isn't a file the read tried.
+  if (identical(name, "st_read") && is.character(value) && always_file) {
+    parts <- data_shapefile_parts(value)
+    if (length(parts) > 0) data_learn(parts, reader = name)
+  }
+}
+
+#' For each shapefile among `paths`, the files read with it: its
+#' attributes (.dbf), index (.shx), projection (.prj) and encoding (.cpg),
+#' in the .shp's case.
+data_shapefile_parts <- function(paths) {
+  shp <- paths[grepl("[.]shp$", paths, ignore.case = TRUE)]
+  if (length(shp) == 0) return(character())
+  parts <- lapply(shp, function(p) {
+    ext <- c(".dbf", ".shx", ".prj", ".cpg")
+    if (endsWith(p, ".SHP")) ext <- toupper(ext)
+    paste0(substr(p, 1L, nchar(p) - 4L), ext)
+  })
+  unlist(parts)
 }
 
 #' `fun` with `hook` run first in its body, in its own environment, so

@@ -3267,6 +3267,69 @@ test_that("arrow's delimited and JSON readers are learned once arrow loads", {
                 c("a.csv", "a.tsv", "a.json"))
 })
 
+test_that("foreign's read.dta(), read.spss() and read.xport() are learned once foreign loads", {
+  skip_if_not_installed("foreign")
+  expect_learns(function(d) {
+                  foreign::write.dta(data.frame(x = 1:2), file.path(d, "f.dta"))
+                  file.copy(system.file("files", "electric.sav", package = "foreign"), file.path(d, "f.sav"))
+                },
+                c('f1 <- foreign::read.dta(file.path(D, "f.dta"))',
+                  'f2 <- suppressWarnings(foreign::read.spss(file.path(D, "f.sav"), to.data.frame = TRUE))'),
+                c("f.dta", "f.sav"))
+  # foreign can't write a SAS transport file; haven can. haven isn't in
+  # Suggests, so it is named only in code the worker runs.
+  skip_if_not_installed("haven")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  f <- file.path(normalizePath(tempdir(), winslash = "/"), basename(tempfile("ember-xpt-", fileext = ".xpt")))
+  w <- run_and_wait(h, "w", 1L, sprintf("haven::write_xpt(data.frame(x = 1:2), %s, version = 5, name = \"F\")", deparse(f)))
+  expect_identical(w$status, "ok", info = w$error$message)
+  r <- run_and_wait(h, "a", 2L, sprintf("f3 <- foreign::read.xport(%s)", deparse(f)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_identical(names(r$data_seen), f)
+})
+
+test_that("sf's st_read() and read_sf() are learned with a shapefile's other files", {
+  # sf needs GDAL, so it isn't in Suggests and CI skips this; run locally with it installed.
+  skip_if_not_installed("sf")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  # sf is named only in code the worker runs, since it isn't in Suggests.
+  w <- run_and_wait(h, "w", 1L, sprintf(paste(
+    'D <- %s',
+    'pts <- sf::st_sf(a = 1:2, geometry = sf::st_sfc(sf::st_point(c(1, 2)), sf::st_point(c(3, 4)), crs = 4326))',
+    'sf::st_write(pts, file.path(D, "p.shp"), quiet = TRUE)',
+    'sf::st_write(pts, file.path(D, "g.gpkg"), quiet = TRUE)', sep = "\n"), deparse(d)))
+  expect_identical(w$status, "ok", info = w$error$message)
+  shp <- list.files(d, pattern = "^p[.]")
+  expect_true(all(c("p.shp", "p.dbf", "p.shx", "p.prj") %in% shp))
+  r <- run_and_wait(h, "a", 2L, 'p <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))')
+  expect_identical(r$status, "ok", info = r$error$message)
+  # A part the shapefile doesn't have (often .cpg) isn't watched.
+  expect_setequal(names(r$data_seen), file.path(d, c(shp, "g.gpkg")))
+  expect_length(r$data_unresolved, 0)
+})
+
+test_that("a shapefile's other files are read with it, in its case", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_identical(e$data_shapefile_parts("a.csv"), character())
+  expect_identical(e$data_shapefile_parts(c("d/x.shp", "Y.SHP")),
+                   c("d/x.dbf", "d/x.shx", "d/x.prj", "d/x.cpg", "Y.DBF", "Y.SHX", "Y.PRJ", "Y.CPG"))
+})
+
+test_that("sf's dsn is a file unless it is a GDAL driver string or virtual path", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_true(e$data_reader_takes_file("st_read", "data/x.shp"))
+  expect_true(e$data_reader_takes_file("st_read", "C:/data/x.shp"))
+  expect_false(e$data_reader_takes_file("st_read", "PG:dbname=d"))
+  expect_false(e$data_reader_takes_file("st_read", "/vsizip/a.zip/b.shp"))
+})
+
 test_that("the readers the worker traces are rules.R's data_readers", {
   e <- new.env(parent = baseenv())
   sys.source(worker_script_path(), e)
