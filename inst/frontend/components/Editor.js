@@ -101,7 +101,16 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
     code_differs: changed_cell_ids(state).length > 0,
     // The phone header's one "Run N" (#501): the edited cells and the ones
     // not run, each counted once, as ember_run_changed_and_not_run runs them.
-    run_both_count: new Set([...changed_cell_ids(state), ...(state.notebook.ember?.not_run_ids ?? [])]).size,
+    // An edit that blanks a cell, or one to an off cell, doesn't run.
+    run_both_count: new Set([
+        ...changed_cell_ids(state).filter(
+            (cell_id) =>
+                /\S/.test(state.cell_inputs_local[cell_id].code) &&
+                !state.notebook.cell_inputs[cell_id]?.metadata?.disabled &&
+                !state.notebook.cell_results[cell_id]?.depends_on_disabled_cells
+        ),
+        ...(state.notebook.ember?.not_run_ids ?? []),
+    ]).size,
     isolated_cell_view: launch_params.isolated_cell_ids != null && launch_params.isolated_cell_ids.length > 0,
     // Not sanitized merely for being an export: a downloaded export is an
     // HTML file and can run scripts anyway, and Ember exports inline widget
