@@ -138,7 +138,8 @@
     --pluto-tree-color: rgb(209 207 207 / 61%);
 
     /*pluto cell styling*/
-    --selected-cell-bg-color: rgb(108 199 178 / 35%);
+    /* 3 : 1 against the page and the code box; 35% was 2.2 : 1. */
+    --selected-cell-bg-color: rgb(108 199 178 / 60%);
     --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #888;
