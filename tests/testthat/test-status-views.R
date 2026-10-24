@@ -18,6 +18,7 @@ test_that("project_ember(): process, not_run, worker_memory and plan (64)", {
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
   e1 <- project_ember(r$state, view_context(r$state))
   expect_equal(e1$not_run, 3L)  # B, ERR, LOOP; not S (blank) or MD (markdown)
+  expect_equal(unlist(e1$not_run_ids), c("B", "ERR", "LOOP"))
 
   r <- drive(r$state, ev_run(NULL, at(11)))
   repeat {
@@ -28,6 +29,7 @@ test_that("project_ember(): process, not_run, worker_memory and plan (64)", {
   }
   e2 <- project_ember(r$state, view_context(r$state))
   expect_equal(e2$not_run, 0L)
+  expect_equal(e2$not_run_ids, list())
 })
 
 # ---- 64. Per-cell ember: stale, code_changed, blocked_by -------------------

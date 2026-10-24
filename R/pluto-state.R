@@ -984,7 +984,7 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #' Pluto's `nbpkg` and `process_status` stay filled beside this
 #' (project_nbpkg(), above); the page still reads both.
 #'
-#' `list(process, worker_memory, not_run, stale, plan, packages)`:
+#' `list(process, worker_memory, not_run, not_run_ids, stale, plan, packages)`:
 #'
 #' * `process`: `"preview"`, `"starting"`, `"ready"`, `"busy"` or
 #'   `"stopped"` -- `state$worker$status`, or `"preview"` in safe preview
@@ -996,6 +996,9 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #'   reported yet).
 #' * `not_run`, `stale`: counts, from `not_run_ids()` (state.R) and the
 #'   views' `stale` flag.
+#' * `not_run_ids`: the cells `not_run` counts, so the phone header's one
+#'   "Run N" can count them together with the edited cells without counting
+#'   a cell twice (#501).
 #' * `plan`: `packages_view(state)$plan`, `list(install, restart)` or `NULL`.
 #' * `packages`: the snapshot date, R/Bioconductor versions, the library's
 #'   status, and one row per locked or not-found package (and per package
@@ -1167,8 +1170,9 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
   # says "stopped"): the same rule snapshot_of() uses for its `process`.
   process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
 
+  not_run <- not_run_ids(state, ctx)
   list(process = process, worker_memory = worker_memory,
-      not_run = length(not_run_ids(state, ctx)), stale = stale,
+      not_run = length(not_run), not_run_ids = as_arr(not_run), stale = stale,
       plan = plan, packages = packages,
       on_cell_change = state$file$header$on_cell_change,
       r_version = state$worker$info$r_version %||% NULL,

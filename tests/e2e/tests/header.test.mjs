@@ -5,9 +5,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
 // 117 (header portion). "R ready" after the first run; clicking it opens
 // the panel at Status.
@@ -81,6 +82,59 @@ test('header: "Run N not run" counts, and clicking it clears it (119)', async (t
   await page.waitForFunction(
     () => document.querySelector("header#pluto-nav button.ember-btn") == null);
   assert.equal(await page.locator("#ember-not-run-bar").count(), 0, "no separate bar above the notebook");
+
+  assertNoProblems(page);
+});
+
+// #501. With cells not run and a cell edited, "Run N not run" and "Run
+// changed" together pushed ⋯ off a phone's screen. Below 641px they are one
+// "Run N", which runs the edit and then the rest, counting each cell once;
+// wider windows keep both.
+test('header: on a phone, "Run N not run" and "Run changed" are one "Run N" and ⋯ stays on screen (#501)', async (t) => {
+  // A long name, as in #501: the file name is what gives way first.
+  const base = tempNotebook("basic.R");
+  const notebook = path.join(path.dirname(base), "a_much_longer_notebook_file_name_for_growth_curves_by_site_2026.R");
+  fs.renameSync(base, notebook);
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "header-501.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1000, height: 844 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "A");
+  await page.waitForFunction(
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready");
+  await page.locator("#ember-r-status").click();
+  await page.waitForSelector("#ember-status-restart");
+  await page.locator("#ember-status-restart").click();
+  await page.waitForFunction(
+    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"));
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#helpbox-wrapper.open", { state: "detached" });
+  await setCellCode(page, "B", "sum(x) + 1");
+  await page.waitForSelector("header#pluto-nav .ember-run-changed");
+
+  const buttons = () => page.locator("header#pluto-nav button.ember-btn").allInnerTexts();
+  assert.deepEqual(await buttons(), ["Run 4 not run", "Run changed"], "both at 1000px");
+
+  for (const width of [390, 360]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.waitForSelector("header#pluto-nav .ember-run-both");
+    // B is one of the 4 not run, so the edit adds no fifth cell.
+    assert.deepEqual(await buttons(), ["Run 4"], `one button at ${width}px`);
+    const more = await page.locator('header#pluto-nav button[aria-label="More"]').boundingBox();
+    assert.ok(more.x + more.width <= width, `⋯ ends at ${more.x + more.width}, inside ${width}px`);
+  }
+
+  await page.locator("header#pluto-nav .ember-run-both").click();
+  await page.waitForFunction(
+    () => document.querySelector("header#pluto-nav button.ember-btn") == null);
+  await page.waitForFunction(
+    () => /\b56\b/.test(document.querySelector('pluto-cell[id="B"] > pluto-output')?.innerText ?? ""));
+  await page.waitForFunction(
+    () => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0);
 
   assertNoProblems(page);
 });
