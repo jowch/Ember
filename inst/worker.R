@@ -4598,7 +4598,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     rd <- utils:::.getHelpFile(rd_path)
     out <- tempfile(fileext = ".html")
     on.exit(unlink(out), add = TRUE)
-    tools::Rd2HTML(rd, out, package = pkg_name, dynamic = TRUE)
+    # The package's own folder, not its name: Rd2HTML reads the version for
+    # the page's footer from its DESCRIPTION. Given only a name, R from 4.7
+    # leaves the footer out.
+    tools::Rd2HTML(rd, out, package = dirname(dirname(rd_path)), dynamic = TRUE)
     full <- paste(readLines(out, warn = FALSE), collapse = "\n")
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)
