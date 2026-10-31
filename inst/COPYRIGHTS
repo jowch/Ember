@@ -2,7 +2,7 @@ This package's R code and worker (R/, inst/worker.R) are copyright Jonathan
 Chen, licensed under the package's own licence (see LICENSE).
 
 The frontend in inst/frontend is forked from Pluto.jl's frontend
-(https://github.com/fonsp/Pluto.jl), used and modified under the MIT
+(https://github.com/JuliaPluto/Pluto.jl), used and modified under the MIT
 licence. Its text is at inst/frontend/LICENSE.
 
 - Pluto.jl: MIT, Copyright (c) 2020-2026 the Pluto.jl authors.
