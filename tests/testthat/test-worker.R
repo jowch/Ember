@@ -3219,12 +3219,15 @@ test_that("a folder a run globs or lists the folders of is watched by what that 
     "y <- Sys.glob(file.path('.', 'data', '*', 'c.csv'), dirmark = TRUE)",
     "z <- list.dirs('data', recursive = FALSE)",
     "w <- Sys.glob(file.path(R.home(), '*'))",
+    # A wildcard in the first folder part (the root is C:/ on Windows).
+    if (.Platform$OS.type != "windows") "v <- Sys.glob('/tm*')",
     "writeLines('2', file.path('data', 'new.csv'))"))
   expect_identical(r$status, "ok", info = r$error$message)
   # Each pattern's wildcard-free folder is resolved; R's own aren't watched.
   expect_setequal(names(r$data_seen), c(paste("Sys.glob", "0", file.path(d, "data", "*.csv"), sep = "\n"),
                                         paste("Sys.glob", "1", file.path(d, "data", "*", "c.csv"), sep = "\n"),
-                                        paste("list.dirs", file.path(d, "data"), "1 0", sep = "\n")))
+                                        paste("list.dirs", file.path(d, "data"), "1 0", sep = "\n"),
+                                        if (.Platform$OS.type != "windows") paste("Sys.glob", "0", "/tm*", sep = "\n")))
   for (k in names(r$data_seen)) expect_identical(r$data_seen[[k]], data_listing_signature(k))
   expect_match(r$data_seen[[paste("Sys.glob", "0", file.path(d, "data", "*.csv"), sep = "\n")]], "^2 ")
 })

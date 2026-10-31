@@ -1254,11 +1254,12 @@ ember_data_glob <- function(paths, dirmark = FALSE) {
   wd <- getwd()
   for (p in unique(paths[!is.na(paths) & nzchar(paths)])) {
     full <- if (data_absolute(p)) path.expand(p) else file.path(wd, p)
+    # Windows takes "\\" between folders, as in "data\\*.csv".
+    if (.Platform$OS.type == "windows") full <- gsub("\\", "/", full, fixed = TRUE)
     at <- regexpr("[*?[]", full)
     base <- if (at < 0) dirname(full) else sub("/[^/]*$", "", substr(full, 1, at - 1))
-    if (!nzchar(base)) base <- "/"
     rest <- substring(full, nchar(base) + 2)
-    base <- data_canon(base)
+    base <- data_canon(if (nzchar(base)) base else "/")
     if (any(startsWith(paste0(sub("/+$", "", base), "/"), run$skip))) next
     run$listed[[paste("Sys.glob", if (isTRUE(as.logical(dirmark))) "1" else "0", paste0(sub("/+$", "", base), "/", rest), sep = "\n")]] <- TRUE
   }

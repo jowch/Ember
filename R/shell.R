@@ -1722,8 +1722,8 @@ data_listing_dirs <- function(key) {
       at <- regexpr("[*?[]", pattern)
       if (at < 0) return(dirname(pattern))
       base <- sub("/[^/]*$", "", substr(pattern, 1, at - 1))
-      if (!nzchar(base)) base <- "/"
       parts <- strsplit(substring(pattern, nchar(base) + 2), "/", fixed = TRUE)[[1]]
+      if (!nzchar(base)) base <- "/"
       dirs <- base
       for (i in seq_len(length(parts) - 1)) {
         found <- Sys.glob(paste0(sub("/+$", "", base), "/", paste(parts[seq_len(i)], collapse = "/")))
