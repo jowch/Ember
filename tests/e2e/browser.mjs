@@ -39,7 +39,34 @@ export async function launchBrowser() {
   const options = { headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false };
   if (process.env.EMBER_BROWSER === "webkit") return untimed(await webkit.launch(options));
   const executablePath = resolveExecutable();
+  if (process.platform === "win32") return untimed(await chromium.launch(await withoutPortRandomization({ executablePath, ...options })));
   return untimed(await chromium.launch({ executablePath, ...options }));
+}
+
+/** On Windows 11 22H2 and later (the runner's Server 2025 among them),
+ * Chromium picks each connection's local port at random
+ * (TcpPortRandomizationWin), and a connect then fails now and then with
+ * WSAENOBUFS, net::ERR_NO_BUFFER_SPACE, while ports are free (#412;
+ * microsoft/playwright#43545 reproduced it after about 1,100 page loads,
+ * and not with the feature off). Windows 10 doesn't enable it, which fits
+ * William never reproducing it.
+ *
+ * Playwright passes its own --disable-features list, and Chromium keeps
+ * only the last one given, so the feature is added to that list rather
+ * than passed alone. The list isn't public: it is read from the command
+ * line of a browser server started for that, then closed. */
+let playwrightDisabled = null;
+async function withoutPortRandomization(options) {
+  // Read once per test process, not per launch: tests launch often.
+  playwrightDisabled ??= (async () => {
+    const server = await chromium.launchServer(options);
+    const theirs = server.process().spawnargs.find((a) => a.startsWith("--disable-features="));
+    await server.close();
+    if (!theirs) throw new Error("Playwright's Chromium was launched without --disable-features; #412's workaround needs it");
+    return theirs;
+  })();
+  const theirs = await playwrightDisabled;
+  return { ...options, ignoreDefaultArgs: [theirs], args: [theirs + ",TcpPortRandomizationWin"] };
 }
 
 /** A page wired to fail the test on a console error, an uncaught page

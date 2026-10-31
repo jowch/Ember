@@ -32,6 +32,89 @@
         })();
     </script>
 
+    <!-- When one of the editor's own files fails to load (#578), the page
+         would otherwise stay blank under its loading bar, or show without
+         styles, and say nothing. A module graph that fails to load can't
+         be retried in the same page (the browser keeps the failure), so
+         the page reloads once; if that fails too, it says what failed and
+         offers a reload. Only editor.js (with everything it imports) and
+         all-styles.css (with its @imports) count: an output's own files
+         don't. -->
+    <script>
+        (function () {
+            var KEY = "ember_reloaded_after_failed_load";
+            var shown = false;
+            function own(el) {
+                if (el.tagName === "SCRIPT") return el.type === "module" && /\/editor\.js(\?|$)/.test(el.src);
+                if (el.tagName === "LINK") return el.rel === "stylesheet" && /\/all-styles\.css(\?|$)/.test(el.href);
+                return false;
+            }
+            function show(what) {
+                if (shown) return;
+                shown = true;
+                var bar = document.createElement("div");
+                bar.id = "ember-load-failed";
+                bar.setAttribute("role", "alert");
+                bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 16px;font:15px/1.4 system-ui,sans-serif;background:#fff4e5;color:#3d2600;border-bottom:1px solid #e0b070;display:flex;gap:12px;align-items:center;flex-wrap:wrap";
+                var text = document.createElement("span");
+                text.textContent = "Ember couldn't load " + what + ", so this page may not work. Reload the page to try again.";
+                var button = document.createElement("button");
+                button.type = "button";
+                button.textContent = "Reload";
+                button.style.cssText = "font:inherit;padding:4px 12px;cursor:pointer";
+                button.onclick = function () { location.reload(); };
+                bar.appendChild(text);
+                bar.appendChild(button);
+                (document.body || document.documentElement).appendChild(bar);
+            }
+            function failed(what) {
+                var tried = false;
+                try { tried = sessionStorage.getItem(KEY) === location.href; } catch (e) { tried = true; }
+                if (!tried) {
+                    try { sessionStorage.setItem(KEY, location.href); location.reload(); return; } catch (e) {}
+                }
+                if (document.body) show(what);
+                else document.addEventListener("DOMContentLoaded", function () { show(what); });
+            }
+            // A failed @import doesn't fail its stylesheet's <link>: the
+            // imported sheet is missing, empty, or (in Chromium, for a
+            // nested import) refuses to give its rules. Imports nest
+            // (editor.css imports fonts.css and the themes), so the whole
+            // tree is checked. Every sheet Ember ships has rules: an empty
+            // one would count as failed.
+            function rulesOf(sheet) {
+                try { return sheet ? sheet.cssRules : null; } catch (e) { return null; }
+            }
+            function emptyImport(sheet, depth) {
+                var rules = rulesOf(sheet);
+                if (!rules || depth > 8) return null;
+                for (var i = 0; i < rules.length; i++) {
+                    var r = rules[i];
+                    if (r.type !== 3) continue;
+                    var inner = rulesOf(r.styleSheet);
+                    if (!inner || inner.length === 0) return r.href;
+                    var nested = emptyImport(r.styleSheet, depth + 1);
+                    if (nested) return nested;
+                }
+                return null;
+            }
+            window.addEventListener("error", function (ev) {
+                var el = ev.target;
+                if (el && el.tagName && own(el)) failed(el.tagName === "SCRIPT" ? "the editor's code" : "the page's styles");
+            }, true);
+            // An element's load reaches the document, not the window.
+            document.addEventListener("load", function (ev) {
+                var el = ev.target;
+                if (!el || el.tagName !== "LINK" || !own(el)) return;
+                if (el.sheet && emptyImport(el.sheet, 0)) failed("the page's styles");
+            }, true);
+            window.addEventListener("load", function () {
+                if (shown) return;
+                try { if (sessionStorage.getItem(KEY) === location.href) sessionStorage.removeItem(KEY); } catch (e) {}
+            });
+        })();
+    </script>
+
     <link rel="icon" type="image/svg+xml" href="./img/favicon.svg">
     <link rel="pluto-external-source" id="pluto-logo-big" href="./img/logo.svg" />
     <link rel="pluto-external-source" id="pluto-logo-small" href="./img/favicon.svg" />

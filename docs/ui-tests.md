@@ -199,6 +199,10 @@ slow open says whether the server or the page took the time.
 48. Live console: a running cell's printed text shows before it ends, and
     a progress bar redrawn with `"\r"` moves in place, one drawing at a
     time (#470, #483, `console-live.test.mjs`).
+49. A file of the editor's own that fails to load: the page reloads once
+    on its own; if the file fails again, a bar says what failed and offers
+    a reload, instead of a blank page under the loading bar (#578,
+    `load-failed.test.mjs`).
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
 tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree

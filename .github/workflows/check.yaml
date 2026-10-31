@@ -201,10 +201,12 @@ jobs:
           if (Test-Path "$env:RUNNER_TEMP\sampler.pid") { Stop-Process -Id (Get-Content "$env:RUNNER_TEMP\sampler.pid") -ErrorAction SilentlyContinue }
           Get-Content "$env:RUNNER_TEMP\sockets.csv" -ErrorAction SilentlyContinue
           Get-ChildItem tests\e2e\test-results\412-*.txt -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName }
-      # The UI sweep, the first-cell check (#284) and the reload check (#385)
-      # again in WebKit, the engine Endeavor's notebook pane uses (WebKitGTK
-      # on Linux), where layout differs from Chromium. Only on ubuntu, where
-      # Playwright's WebKit is close to WebKitGTK.
+      # The UI sweep, the first-cell check (#284), the reload check (#385)
+      # and the failed-load checks (#578: a fine page must not reload or show
+      # the bar) again in WebKit, the engine Endeavor's notebook pane uses
+      # (WebKitGTK on Linux), where layout and stylesheet access differ from
+      # Chromium. Only on ubuntu, where Playwright's WebKit is close to
+      # WebKitGTK.
       - name: UI sweep in WebKit
         if: matrix.os == 'ubuntu-latest'
         working-directory: tests/e2e
@@ -212,7 +214,7 @@ jobs:
           EMBER_BROWSER: webkit
         run: |
           npx playwright-core install --with-deps webkit
-          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs
+          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs tests/load-failed.test.mjs
       - if: always() && steps.apt.outcome == 'success'
         uses: ./.github/actions/apt-cache/save
         with:
