@@ -3183,6 +3183,29 @@ test_that("a package reader's missing file is watched, unless the reader takes i
   expect_identical(r5$data_seen[[f4]], "missing")
 })
 
+test_that("a folder a run lists is watched by what the listing returns as the run ends (#514)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "data", "sub"), recursive = TRUE)
+  d <- normalizePath(d, winslash = "/")
+  for (f in c("a.csv", "b.txt", file.path("sub", "c.csv"))) writeLines("1", file.path(d, "data", f))
+  r <- run_and_wait(h, "a", 1L, paste(sep = "\n",
+    sprintf("setwd(%s)", deparse(d)),
+    "x <- list.files('data', pattern = 'csv$')",
+    "y <- dir(file.path('.', 'data'), recursive = TRUE)",
+    "z <- list.files(R.home())",
+    "writeLines('2', file.path('data', 'new.csv'))"))
+  expect_identical(r$status, "ok", info = r$error$message)
+  key <- function(flags, pattern) paste("list.files", file.path(d, "data"), flags, pattern, sep = "\n")
+  # Both spellings of data/ name one folder; R's own folders aren't watched.
+  expect_setequal(names(r$data_seen), c(key("0 0 0 0 0 0", "csv$"), key("0 1 0 0 0 0", "")))
+  # The shell's copy of the signature agrees, and the cell's own new file is in it.
+  for (k in names(r$data_seen)) expect_identical(r$data_seen[[k]], data_listing_signature(k))
+  expect_match(r$data_seen[[key("0 0 0 0 0 0", "csv$")]], "^2 ")
+  expect_match(r$data_seen[[key("0 1 0 0 0 0", "")]], "^4 ")
+})
+
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
   h <- worker_harness(extra_libs = .libPaths())

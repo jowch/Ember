@@ -984,6 +984,7 @@ data_watch_start <- function(files, writes = list()) {
   run$changed <- character()
   run$unresolved <- character()
   run$sourced <- character()
+  run$listed <- new.env(parent = emptyenv())
   run$at <- 0L
   run$home <- paste0(sub("/+$", "", data_canon(settings_base$wd %||% getwd())), "/")
   run$skip <- data_skip_dirs()
@@ -1024,10 +1025,16 @@ data_watch_step <- function(run, k) {
 
 #' The versions a run ended with, by file name, for the report's
 #' `data_seen`; `NULL` when it read none.
+#' A folder the run listed is there by its listing's key, with what the
+#' listing returns as the run ends (#514): files the cell wrote there
+#' itself are in it, so they don't wake it.
 data_watch_seen <- function(run) {
-  keys <- ls(run$seen, all.names = TRUE, sorted = TRUE)
-  if (length(keys) == 0) return(NULL)
-  mget(keys, envir = run$seen)
+  if (is.null(run)) return(NULL)
+  seen <- mget(ls(run$seen, all.names = TRUE), envir = run$seen)
+  listed <- ls(run$listed, all.names = TRUE)
+  seen[listed] <- lapply(listed, data_listing_signature)
+  if (length(seen) == 0) return(NULL)
+  seen[sort(names(seen))]
 }
 
 #' The run's watch list while a cell runs (`data_watch_start()`), for the
@@ -1204,6 +1211,63 @@ ember_data_conn <- function(description, open = "") {
   data_learn(description, mode = if (is.character(open) && length(open) == 1) open else "")
 }
 
+#' Hook for `list.files()` and `dir()`, called first in each with its
+#' arguments (#514). Each folder listed is watched by what the listing
+#' returns, so the cell reruns when a file it would list appears or goes,
+#' and not when any other file in the folder changes (an Excel lock file).
+#' The key (`data_listing_key()`) is all the listing needs: the shell
+#' lists again from it.
+ember_data_list <- function(path, pattern = NULL, all.files = FALSE, recursive = FALSE,
+                            ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE, fixed = FALSE) {
+  run <- data_run
+  if (is.null(run) || is.null(running) || length(load_stack) > 0 || !is.character(path)) return(invisible())
+  wd <- getwd()
+  for (p in unique(path[!is.na(path) & nzchar(path)])) {
+    full <- data_canon(if (data_absolute(p)) p else file.path(wd, p))
+    if (any(startsWith(paste0(sub("/+$", "", full), "/"), run$skip))) next
+    key <- tryCatch(data_listing_key(full, pattern, all.files, recursive, ignore.case, include.dirs, no.., fixed),
+                    error = function(e) NULL)
+    if (!is.null(key)) run$listed[[key]] <- TRUE
+  }
+  invisible()
+}
+
+#' The key a listing of folder `full` is watched by: "list.files", the
+#' folder, its flags and its pattern (last, as it may hold a newline), one
+#' to a line. R/shell.R's `data_listing_signature()` reads it, and must
+#' agree with this one's.
+data_listing_key <- function(full, pattern, all.files, recursive, ignore.case, include.dirs, no.., fixed) {
+  flag <- function(x) if (isTRUE(as.logical(x))) "1" else "0"
+  pattern <- if (is.null(pattern)) "" else as.character(pattern)[[1]]
+  paste("list.files", full,
+        paste(flag(all.files), flag(recursive), flag(ignore.case), flag(include.dirs), flag(no..), flag(fixed)),
+        pattern, sep = "\n")
+}
+
+#' What a listing's key lists now, as text a watcher compares: the number
+#' of names and their MD5, sorted in C order, or "missing" for a folder
+#' that isn't there. R/shell.R's copy must write the same text.
+data_listing_signature <- function(key) {
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  path <- f[[2]]
+  flags <- strsplit(f[[3]], " ", fixed = TRUE)[[1]] == "1"
+  pattern <- paste(f[-(1:3)], collapse = "\n")
+  if (!dir.exists(path)) return("missing")
+  args <- list(path, pattern = if (nzchar(pattern)) pattern, all.files = flags[[1]], recursive = flags[[2]],
+               ignore.case = flags[[3]], include.dirs = flags[[4]], no.. = flags[[5]])
+  if ("fixed" %in% names(formals(list.files))) args$fixed <- flags[[6]]
+  names <- tryCatch(sort(enc2utf8(do.call(list.files, args)), method = "radix"), error = function(e) NULL)
+  if (is.null(names)) return("missing")
+  bytes <- charToRaw(paste(names, collapse = "\n"))
+  md5 <- if (getRversion() >= "4.5.0") tools::md5sum(bytes = bytes) else {
+    tmp <- tempfile()
+    on.exit(unlink(tmp))
+    writeBin(bytes, tmp)
+    tools::md5sum(tmp)
+  }
+  paste(length(names), unname(md5))
+}
+
 #' Hook for `isOpen()`, which read.table() calls on a connection it is
 #' given before reading: the connection's file is read, or written for a
 #' `rw` of "w…".
@@ -1321,6 +1385,10 @@ install_data_traces <- function() {
     replace_binding(baseenv(), name, hook_function(get(name, envir = baseenv()), hook))
   }
   replace_binding(baseenv(), "isOpen", hook_function(isOpen, bquote((.(ember_data_isopen))(con, rw))))
+  # list.files() and dir() are one function; older R has no `fixed`.
+  list_args <- intersect(names(formals(ember_data_list)), names(formals(list.files)))
+  list_hook <- as.call(c(list(ember_data_list), sapply(list_args, as.name, simplify = FALSE)))
+  for (name in c("list.files", "dir")) replace_binding(baseenv(), name, hook_function(get(name, envir = baseenv()), list_hook))
   for (pkg in names(data_reader_args)) {
     if (identical(pkg, "base") || isNamespaceLoaded(pkg)) hook_data_readers(pkg)
     else setHook(packageEvent(pkg, "onLoad"), local({ p <- pkg; function(...) hook_data_readers(p) }))
