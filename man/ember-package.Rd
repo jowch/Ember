@@ -11,21 +11,30 @@ file; a background worker process runs the code while the main session
 stays responsive.
 }
 \details{
-The public surface is grouped onto a few pages:
+To write notebooks:
 
 \itemize{
-  \item \link{start_server}: start Ember and open it in your browser, to
-    write and run notebooks there (\code{srv <- start_server()}).
-  \item \link{notebooks}: open, run and inspect a notebook (\code{open_notebook},
-    \code{run_cells}, \code{notebook_snapshot}, and the rest of the session API).
-  \item \link{edit_notebook}: stage edits to a notebook's cells.
-  \item \link{read_cell}: read one cell's code, without a notebook.
-  \item \link{notebook_graph}: build and update the dependency graph for a
-    whole notebook.
-  \item \link{graph_queries}: read-only queries over a graph (upstream,
-    downstream, run order, errors, summaries).
+  \item \link{start_server}: start Ember and open it in your browser
+    (\code{srv <- start_server()}). Write and run notebooks there.
+  \item \code{\link{run}()}: run a saved notebook from start to finish
+    outside the browser, with the package versions it records.
+  \item Inputs: a slider, text box or dropdown whose value is a variable
+    comes from the \pkg{emberui} package (\code{library(emberui)}), which
+    Ember installs like any other package. See
+    \code{?emberui::input_slider}.
+}
+
+For scripts and for programs that host Ember:
+
+\itemize{
   \item \link{packages}: a notebook's packages (status, the date move,
-    running or cleaning up outside a session).
+    cleaning up the cache).
+  \item \link{notebooks}: open, run and inspect a notebook from R
+    (\code{open_notebook}, \code{run_cells}, \code{notebook_snapshot}).
+  \item \link{edit_notebook}: stage edits to a notebook's cells.
+  \item \link{serve}: serve notebooks from your own R process.
+  \item \link{read_cell}, \link{notebook_graph} and \link{graph_queries}:
+    the dependency graph Ember builds from the code.
 }
 }
 \author{
