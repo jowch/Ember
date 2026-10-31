@@ -465,8 +465,13 @@ before the cell runs.
   tick, and every 10 s or 100 times the listing's own time, whichever is
   longer, for a file system that doesn't move a folder's time. These
   times are the engine's own clock, never a network drive's.
-  `Sys.glob()`, `list.dirs()` and `fs::dir_ls()` aren't watched yet
-  (#595).
+- `Sys.glob()`, `list.dirs()` and `fs::dir_ls()` are watched the same
+  way (#595). A glob looks in the folder before its first wildcard and in
+  each folder a wildcard in a folder part matches, so
+  `Sys.glob("data/*/x.csv")` reruns when `x.csv` appears in a new folder
+  under `data/`. The engine lists `dir_ls()` again without fs, as fs does:
+  hidden files only with `all`, no descent into a linked folder, and the
+  glob or regexp matched against the path as the cell wrote it.
 - The cost, measured in the worker on a cloud container, is about 15 µs
   for each read of a file the run already read and about 0.2 ms the first
   time (`lapply()` over 2000 small CSVs: 1.3 s, against 0.74 s in plain R).

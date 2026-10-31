@@ -1606,25 +1606,18 @@ data_signature <- function(info) {
   if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
 }
 
-#' Whether data-watch key `p` is a folder listing's (#514), made by
-#' inst/worker.R's `data_listing_key()`, rather than a file's path.
-is_listing_key <- function(p) startsWith(as.character(p), "list.files\n")
+#' Whether data-watch key `p` is a folder listing's (#514, #595), made by
+#' one of inst/worker.R's listing hooks, rather than a file's path.
+is_listing_key <- function(p) grepl("^(list\\.files|Sys\\.glob|list\\.dirs|dir_ls)\n", as.character(p))
 
 #' What a listing's key lists now, as text a watcher compares: the number
 #' of names and their MD5, sorted in C order, or "missing" for a folder
-#' that isn't there.
+#' that isn't there. inst/worker.R's copy must be the same, as must
+#' `data_listing_names()`'s (a test checks).
 data_listing_signature <- function(key) {
-  # inst/worker.R's data_listing_signature() must write the same text.
-  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
-  path <- f[[2]]
-  flags <- strsplit(f[[3]], " ", fixed = TRUE)[[1]] == "1"
-  pattern <- paste(f[-(1:3)], collapse = "\n")
-  if (!dir.exists(path)) return("missing")
-  args <- list(path, pattern = if (nzchar(pattern)) pattern, all.files = flags[[1]], recursive = flags[[2]],
-               ignore.case = flags[[3]], include.dirs = flags[[4]], no.. = flags[[5]])
-  if ("fixed" %in% names(formals(list.files))) args$fixed <- flags[[6]]
-  names <- tryCatch(sort(enc2utf8(do.call(list.files, args)), method = "radix"), error = function(e) NULL)
+  names <- data_listing_names(key)
   if (is.null(names)) return("missing")
+  names <- sort(enc2utf8(names), method = "radix")
   bytes <- charToRaw(paste(names, collapse = "\n"))
   md5 <- if (getRversion() >= "4.5.0") tools::md5sum(bytes = bytes) else {
     tmp <- tempfile()
@@ -1635,8 +1628,113 @@ data_listing_signature <- function(key) {
   paste(length(names), unname(md5))
 }
 
-#' A listing's watch record: the folders it looks in (its folder, and
-#' with `recursive` each one under it) with their modified times, and its
+#' The names a listing's key lists now, or `NULL` when its folder isn't
+#' there, by the listing's kind, its key's first line (#514, #595):
+#' `list.files()` (and `dir()`), `Sys.glob()`, `list.dirs()` and
+#' `fs::dir_ls()`. `dir_ls()` is listed with `list.files()` and filtered
+#' as fs filters it, so the engine needs no fs; its glob and regexp match
+#' the paths it returns, which start with the path as the cell wrote it.
+data_listing_names <- function(key) {
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  flags <- function(i) strsplit(f[[i]], " ", fixed = TRUE)[[1]] == "1"
+  switch(f[[1]],
+    list.files = {
+      if (!dir.exists(f[[2]])) return(NULL)
+      x <- flags(3)
+      pattern <- paste(f[-(1:3)], collapse = "\n")
+      args <- list(f[[2]], pattern = if (nzchar(pattern)) pattern, all.files = x[[1]], recursive = x[[2]],
+                   ignore.case = x[[3]], include.dirs = x[[4]], no.. = x[[5]])
+      if ("fixed" %in% names(formals(list.files))) args$fixed <- x[[6]]
+      tryCatch(do.call(list.files, args), error = function(e) NULL)
+    },
+    Sys.glob = tryCatch(Sys.glob(paste(f[-(1:2)], collapse = "\n"), dirmark = f[[2]] == "1"), error = function(e) NULL),
+    list.dirs = {
+      if (!dir.exists(f[[2]])) return(NULL)
+      x <- flags(3)
+      tryCatch(list.dirs(f[[2]], full.names = x[[1]], recursive = x[[2]]), error = function(e) NULL)
+    },
+    dir_ls = {
+      # The folder, the path as written, then: all, recurse (-1 for any
+      # depth), invert, ignore.case, perl, fixed; the type mask; the glob; the
+      # regexp (last, as it may hold a newline).
+      if (!dir.exists(f[[2]])) return(NULL)
+      shown <- f[[3]]
+      x <- strsplit(f[[4]], " ", fixed = TRUE)[[1]]
+      all <- x[[1]] == "1"
+      depth <- as.integer(x[[2]])
+      lgl <- x[3:6] == "1"
+      types <- as.integer(f[[5]])
+      glob <- f[[6]]
+      regexp <- paste(f[-(1:6)], collapse = "\n")
+      # fs walks the tree itself: hidden names only with `all`, and it
+      # doesn't descend into a symlinked folder, where list.files() does.
+      walk <- function(rel, depth) {
+        names <- list.files(if (nzchar(rel)) file.path(f[[2]], rel) else f[[2]], all.files = all, no.. = TRUE)
+        if (nzchar(rel)) names <- file.path(rel, names)
+        if (depth == 0) return(names)
+        full <- file.path(f[[2]], names)
+        down <- names[dir.exists(full) & !nzchar(Sys.readlink(full))]
+        c(names, unlist(lapply(down, walk, depth = depth - 1)))
+      }
+      rel <- tryCatch(walk("", depth), error = function(e) NULL)
+      if (is.null(rel)) return(NULL)
+      # `types` is fs's own mask: 2 files, 4 folders, 8 links, -1 any. A
+      # type this doesn't tell apart (a FIFO, a socket, "unknown") keeps
+      # every name, so the listing never misses a change fs would see.
+      if (types != -1 && bitwAnd(types, bitwNot(14L)) == 0) {
+        full <- file.path(f[[2]], rel)
+        dir <- dir.exists(full)
+        link <- nzchar(Sys.readlink(full))
+        keep <- (bitwAnd(types, 2L) > 0 & !dir & !link) | (bitwAnd(types, 4L) > 0 & dir & !link) | (bitwAnd(types, 8L) > 0 & link)
+        rel <- rel[keep]
+      }
+      shown <- sub("(.)/+$", "\\1", shown)
+      paths <- if (shown == ".") rel else if (shown == "/") paste0("/", rel) else paste0(shown, "/", rel)
+      if (nzchar(glob)) regexp <- utils::glob2rx(glob)
+      if (nzchar(regexp)) paths <- suppressWarnings(grep(regexp, paths, ignore.case = lgl[[2]], perl = lgl[[3]], fixed = lgl[[4]],
+                                                         value = TRUE, invert = lgl[[1]]))
+      paths
+    },
+    NULL)
+}
+
+#' The folders listing `key` looks in, whose modified times move when
+#' what it lists may have changed: its folder, and the ones under it it
+#' descends into. For `Sys.glob()`, the folder before the pattern's first
+#' wildcard and each folder part matches (`data/*/x.csv` looks in `data`
+#' and each of its folders). A folder that isn't there is kept: its time
+#' appears when it does.
+data_listing_dirs <- function(key) {
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  under <- function(path, depth = -1L) {
+    if (depth == 0 || !dir.exists(path)) return(path)
+    sub <- list.dirs(path, full.names = FALSE)
+    sub <- sub[nzchar(sub)]
+    if (depth > 0) sub <- sub[lengths(regmatches(sub, gregexpr("/", sub, fixed = TRUE))) < depth]
+    unique(c(path, file.path(path, sub)))
+  }
+  switch(f[[1]],
+    list.files = under(f[[2]], if (strsplit(f[[3]], " ", fixed = TRUE)[[1]][[2]] == "1") -1L else 0L),
+    list.dirs = under(f[[2]], if (strsplit(f[[3]], " ", fixed = TRUE)[[1]][[2]] == "1") -1L else 0L),
+    dir_ls = under(f[[2]], as.integer(strsplit(f[[4]], " ", fixed = TRUE)[[1]][[2]])),
+    Sys.glob = {
+      pattern <- paste(f[-(1:2)], collapse = "\n")
+      at <- regexpr("[*?[]", pattern)
+      if (at < 0) return(dirname(pattern))
+      base <- sub("/[^/]*$", "", substr(pattern, 1, at - 1))
+      parts <- strsplit(substring(pattern, nchar(base) + 2), "/", fixed = TRUE)[[1]]
+      if (!nzchar(base)) base <- "/"
+      dirs <- base
+      for (i in seq_len(length(parts) - 1)) {
+        found <- Sys.glob(paste0(sub("/+$", "", base), "/", paste(parts[seq_len(i)], collapse = "/")))
+        dirs <- c(dirs, found[dir.exists(found)])
+      }
+      unique(dirs)
+    })
+}
+
+#' A listing's watch record: the folders it looks in
+#' (`data_listing_dirs()`) with their modified times, and its
 #' signature. Adding, removing or renaming a file changes its folder's
 #' time, so the poll lists again only when one moved: listing 20,000
 #' files takes about 140 ms, checking one folder's time well under 1 ms.
@@ -1651,11 +1749,8 @@ data_listing_signature <- function(key) {
 #' whichever is longer): a file system that doesn't move a folder's time
 #' when its entries change still has its change found.
 data_listing_watch <- function(key, seen_at = as.numeric(Sys.time())) {
-  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
-  path <- f[[2]]
-  recursive <- strsplit(f[[3]], " ", fixed = TRUE)[[1]][[2]] == "1"
   start <- as.numeric(Sys.time())
-  dirs <- if (recursive && dir.exists(path)) unique(c(path, list.dirs(path, full.names = TRUE))) else path
+  dirs <- data_listing_dirs(key)
   mtimes <- folder_mtimes(dirs)
   sig <- data_listing_signature(key)
   listed_at <- as.numeric(Sys.time())

@@ -244,6 +244,23 @@ test_that("autorun: a cell that lists a folder reruns when a file it lists appea
   expect_identical(runs(), 2L)
 })
 
+test_that("autorun: a cell that globs folders reruns when a file appears in a new one (#595)", {
+  cells <- list(S = cell(""), R = cell("n <- length(Sys.glob('data/*/x.csv'))"), U = cell("n * 10"))
+  path <- write_session_notebook(cells)
+  data <- file.path(dirname(path), "data")
+  dir.create(file.path(data, "a"), recursive = TRUE)
+  writeLines("1", file.path(data, "a", "x.csv"))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+  expect_identical(shown_u(notebook_snapshot(nb)), "[1] 10")
+  settle(nb, function(snap) length(Filter(is_listing_key, names(nb$data_watch))) == 1 && is_idle(snap))
+  dir.create(file.path(data, "b"))
+  writeLines("2", file.path(data, "b", "x.csv"))
+  settle(nb, function(snap) identical(shown_u(snap), "[1] 20") && is_idle(snap))
+})
+
 test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
   cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
   path <- write_session_notebook(cells)
@@ -1429,6 +1446,51 @@ test_that("a recursive listing's watch covers the folders under it (#514)", {
   expect_setequal(w$dirs, c(d, file.path(d, "a"), file.path(d, "a", "b")))
   expect_identical(w$sig, data_listing_signature(paste("list.files", d, "0 1 0 0 0 0", "", sep = "\n")))
   expect_identical(data_listing_watch(paste("list.files", d, "0 0 0 0 0 0", "", sep = "\n"))$dirs, d)
+})
+
+test_that("a glob's watch covers the folders its pattern looks in (#595)", {
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "a", "x"), recursive = TRUE)
+  dir.create(file.path(d, "b", "x"), recursive = TRUE)
+  dir.create(file.path(d, "c"))
+  d <- normalizePath(d, winslash = "/")
+  key <- paste("Sys.glob", "0", file.path(d, "*", "x", "*.csv"), sep = "\n")
+  expect_true(is_listing_key(key))
+  w <- data_listing_watch(key)
+  expect_setequal(w$dirs, c(d, file.path(d, c("a", "b", "c")), file.path(d, c("a", "b"), "x")))
+  expect_identical(data_listing_dirs(paste("Sys.glob", "0", file.path(d, "a", "*.csv"), sep = "\n")), file.path(d, "a"))
+  expect_identical(data_listing_dirs(paste("Sys.glob", "0", file.path(d, "a", "f.csv"), sep = "\n")), file.path(d, "a"))
+  # A wildcard in the first folder part looks in the root.
+  expect_identical(data_listing_dirs(paste("Sys.glob", "0", "/tm*", sep = "\n")), "/")
+  if (.Platform$OS.type != "windows" && dir.exists("/tmp") && dir.exists("/usr")) {
+    expect_true("/tmp" %in% data_listing_dirs(paste("Sys.glob", "0", "/t*/x", sep = "\n")))
+    expect_false("/usr" %in% data_listing_dirs(paste("Sys.glob", "0", "/t*/x", sep = "\n")))
+  }
+  # A file in a folder the pattern reaches is a change; one elsewhere isn't.
+  writeLines("1", file.path(d, "c", "f.csv"))
+  expect_identical(data_listing_signature(key), w$sig)
+  writeLines("1", file.path(d, "b", "x", "f.csv"))
+  expect_match(data_listing_signature(key), "^1 ")
+})
+
+test_that("list.dirs() and dir_ls() watch the folders they descend into (#595)", {
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "a", "b", "c"), recursive = TRUE)
+  d <- normalizePath(d, winslash = "/")
+  dirs <- function(flags) data_listing_dirs(paste("list.dirs", d, flags, sep = "\n"))
+  expect_identical(dirs("1 0"), d)
+  expect_setequal(dirs("1 1"), c(d, file.path(d, c("a", "a/b", "a/b/c"))))
+  ls_key <- function(depth) paste("dir_ls", d, d, paste("0", depth, "0 0 0 0"), "-1", "", "", sep = "\n")
+  expect_identical(data_listing_dirs(ls_key(0)), d)
+  expect_setequal(data_listing_dirs(ls_key(1)), c(d, file.path(d, "a")))
+  expect_setequal(data_listing_dirs(ls_key(-1)), c(d, file.path(d, c("a", "a/b", "a/b/c"))))
+  # A new folder deeper than the depth isn't a change; one within it is.
+  sig <- data_listing_signature(ls_key(1))
+  dir.create(file.path(d, "a", "b", "d"))
+  expect_identical(data_listing_signature(ls_key(1)), sig)
+  dir.create(file.path(d, "a", "e"))
+  expect_false(identical(data_listing_signature(ls_key(1)), sig))
+  expect_identical(data_listing_signature(paste("list.dirs", file.path(d, "gone"), "1 1", sep = "\n")), "missing")
 })
 
 test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
