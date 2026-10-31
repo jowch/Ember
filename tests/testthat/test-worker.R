@@ -2754,6 +2754,9 @@ test_that("help() (45)", {
   expect_match(m$html, "Arithmetic Mean")
   expect_no_match(m$html, "<html")
   expect_no_match(m$html, "<head")
+  # The footer names the package and its version, which R-devel only
+  # finds from the package's folder (help_lookup()).
+  expect_match(m$html, "[Package <em>base</em> version ", fixed = TRUE)
 
   h$send(list(type = "help", id = 2L, topic = "no_such_topic_xyz", package = NULL))
   m2 <- h$receive()

@@ -14,6 +14,18 @@ on:
 # report on a head nobody will merge. Every other run (a push, a run by hand)
 # gets a group of its own, so it is never cancelled and never waits: a shared
 # group would also drop a run still waiting behind another.
+#
+# One exception, per job: the macOS jobs on a push to main. About five macOS
+# runners serve the whole account, and on 10-23 and 10-24 83 of 120 main
+# macOS jobs were still waiting for one when a newer commit landed. So each
+# macOS job on main shares a group with the same job of other main pushes
+# (MACOS_MAIN below), without cancel-in-progress: one holds the group
+# (running, or queued for a runner), one waits behind it, and a newer push
+# cancels the one waiting. The job holding the group is never cancelled, and
+# the newest commit always gets its macOS run; the skipped commit's run shows
+# as cancelled. Linux and Windows still run on every commit. The cost: a break
+# that only macOS sees, during a burst of merges, is pinned to the commits
+# between two macOS runs, not to one commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
@@ -30,6 +42,10 @@ jobs:
     # Slowest: 46 minutes (ubuntu-latest).
     timeout-minutes: 90
     name: R CMD check (${{ matrix.os }})
+    # MACOS_MAIN: see the concurrency comment at the top.
+    concurrency:
+      group: ${{ github.workflow }}-R-CMD-check-${{ matrix.os }}-${{ matrix.os == 'macos-latest' && github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.run_id }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +130,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Slowest: 85 minutes (ubuntu-latest, with the WebKit sweep).
     timeout-minutes: 180
+    # MACOS_MAIN: see the concurrency comment at the top.
+    concurrency:
+      group: ${{ github.workflow }}-e2e-${{ matrix.os }}-${{ matrix.os == 'macos-latest' && github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.run_id }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:

@@ -261,6 +261,29 @@ test_that("after allow, a missing target emits exactly one install; a second eve
   expect_equal(sum(effect_types(r2) == "install"), 0)
 })
 
+test_that("a queued cell waiting for an install says what it waits for, and the page gets when the install started (#590)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)"), B = cell("1 + 1")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  js <- pluto_state(r$state)$js
+  expect_null(js$ember$install_started_at)
+
+  r <- drive(r$state, ev_allow(at(4)), ev_run("A", at(5)))
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  expect_equal(js$ember$install_started_at, 4)
+  expect_equal(unlist(js$cell_results$A$ember$waiting_for), "dplyr")
+  expect_null(js$cell_results$B$ember$waiting_for)
+
+  token <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(token, r$state$packages$target$key, NULL, "renv failed", character(), at(6)))
+  js <- pluto_state(r$state)$js
+  expect_null(js$ember$install_started_at)
+  # A failed install lets the cell run (and fail), so it no longer waits.
+  expect_null(js$cell_results$A$ember$waiting_for)
+})
+
 test_that("a lock change during an install waits for the running job, then installs the new target (36)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- drive(s, ev_open(at(1)))
@@ -407,6 +430,32 @@ test_that("a cell rerun to wait for an install marks its dependents stale meanwh
                                       NULL, character(), at(22)))
   expect_equal(last_sent(r)$cell, "A")
   r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r), report(created = "x"), at(23)))
+  expect_equal(last_sent(r)$cell, "B")
+})
+
+test_that("a cell run by hand waits for an edited ancestor that waits for an install (#604)", {
+  s <- pkg_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x + 1")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(4)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(5)))
+
+  # A no longer defines x, and needs a package the library doesn't have.
+  # Running B runs the edited A first (#174), so B mustn't run while A
+  # waits: it would read A's old x. `dplyr::` attaches nothing, so B has no
+  # edge to A and isn't waiting itself.
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "z <- dplyr::n_distinct(1)")), at(6)),
+             ev_run("B", at(7)))
+  expect_setequal(r$state$pending, c("A", "B"))
+  expect_null(last_sent(r))
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(20)))
+  target_key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(target_key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, target_key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r), report(created = "z"), at(23)))
   expect_equal(last_sent(r)$cell, "B")
 })
 

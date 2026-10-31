@@ -37,7 +37,7 @@ run_cells(nb, 2, wait = TRUE)                        # allows; installs; then ru
 package_status(nb)$library$status                    # "ready"
 ```
 
-While the install runs, cells that don't need dplyr still run. Cell 2 shows `queued` with `waiting_for = "dplyr"`. A cell in another place that calls `filter()` without naming dplyr waits too: until dplyr is installed Ember doesn't know its exports, so any cell with a name that resolves to nothing (no cell defines it, and it isn't base R) waits for the packages being installed. Cells whose names all resolve still run. Cells that depend on cell 2 show as stale while it waits, because their last result came from the code before the edit. They rerun after cell 2 runs (#248).
+While the install runs, cells that don't need dplyr still run. Cell 2 shows `queued` with `waiting_for = "dplyr"`, and in the page a chip, "Waiting for dplyr to install · 0:42", timed from the install's start (#590). A cell in another place that calls `filter()` without naming dplyr waits too: until dplyr is installed Ember doesn't know its exports, so any cell with a name that resolves to nothing (no cell defines it, and it isn't base R) waits for the packages being installed. Cells whose names all resolve still run. Cells that depend on cell 2 show as stale while it waits, because their last result came from the code before the edit. They rerun after cell 2 runs (#248).
 
 **Endeavor's adapter asks for package status and acts on a missing package.**
 

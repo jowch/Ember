@@ -43,6 +43,14 @@ main <- function(plan_path) {
   # from their repositories' moving HEAD, outside the lock; the lock alone
   # decides (each GitHub package needs its own [sources] entry).
   Sys.setenv(RENV_CONFIG_INSTALL_REMOTES = "FALSE")
+  # renv downloads into this process's own folder, not renv-root, which
+  # every install shares: another install could open an archive there
+  # that this one is still writing, and fail (#616). `tempdir()` keeps the
+  # paths as short as renv-root's, which matters on Windows, and R
+  # removes it when the installer exits.
+  downloads <- file.path(tempdir(), "downloads")
+  Sys.setenv(RENV_PATHS_SOURCE = file.path(downloads, "source"),
+             RENV_PATHS_BINARY = file.path(downloads, "binary"))
 
   if (!is.null(ember:::read_library_manifest(plan$path))) {
     unlink(plan$staging, recursive = TRUE)
@@ -135,8 +143,7 @@ main <- function(plan_path) {
   # again. What installed stays.
   if (inherits(restored, "error")) {
     missing <- setdiff(names(wanted), list.files(plan$staging))
-    root <- Sys.getenv("RENV_PATHS_ROOT", file.path(plan$cache, "renv-root"))
-    bad <- ember:::unreadable_downloads(missing, root)
+    bad <- ember:::unreadable_downloads(missing, downloads)
     undownloaded <- ember:::renv_download_failures(readLines(restore_log, warn = FALSE))
     if (length(bad) > 0 || length(undownloaded) > 0) {
       writeLines(c(sprintf("ember: %s couldn't be read (a download cut short); downloading it again", basename(bad)),

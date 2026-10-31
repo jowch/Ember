@@ -31,8 +31,7 @@ fuzz_steps <- function() {
 # entry's checks that its trace passes up to there. A known trace stops at
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
-fuzz_known <- list(
-  "inputs lazy 2959" = list(issue = 604, step = 15L, kind = "after running _, it isn't fresh"))
+fuzz_known <- list()
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))
@@ -263,6 +262,22 @@ test_that("a hand run of an edited cell runs the ancestor that read its old code
     steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v4 <- (14 + 1 * v3) %% 997")), run = "C3"),
                  list(ops = list(list(op = "set_code", cell = "C6", code = "v2[1] <- 85\n(86 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997")), run = NULL),
                  list(ops = list(list(op = "set_code", cell = "C2", code = "v3 <- (77 + 1 * v9) %% 997")), run = "all"))))
+})
+
+test_that("a definition moved to another cell isn't removed by the old definer's next run (#611)", {
+  # v4 moves from C4 to C1. The run of C6 runs C1, then C4, whose start
+  # used to remove the v4 its last run created, which C1 had just set.
+  moved <- function(mode, c1) list(mode = mode,
+    cells = list(C1 = "v1 <- 20", C4 = "v4 <- 14 + v1", C6 = "v6 <- 84 + v4"),
+    steps = list(list(ops = list(), run = "C6"),
+                 list(ops = list(list(op = "set_code", cell = "C1", code = c1)), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C4", code = "v9 <- 14 + v1")), run = "C6")))
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(moved(mode, "v4 <- 73\nv1 <- 20"))
+    # C1 takes v4 over but doesn't set it: C4's old v4 must not be left
+    # for C6 to read.
+    expect_trace_passes(moved(mode, "if (FALSE) v4 <- 73\nv1 <- 20"))
+  }
 })
 
 test_that("a queued cell runs after a cell that dropping a graph error's result left stale (#449)", {

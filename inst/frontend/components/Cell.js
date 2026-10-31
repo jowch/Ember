@@ -11,7 +11,7 @@ import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
+import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, PackagesIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names, defining_cell } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
@@ -19,6 +19,7 @@ import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 import { ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
 import { help_query_of } from "../common/help_query.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
+import { my_clock_is_ahead_by_now } from "../common/clock_sync.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -83,6 +84,63 @@ const join_names = (/** @type {string[]} */ parts) =>
  * an array, which th() renders as a slot, escaped. */
 export const join_parts = (/** @type {any[]} */ parts) =>
     parts.length === 1 ? [parts[0]] : html`${parts.slice(0, -1).map((part, i) => (i === 0 ? part : html`, ${part}`))} ${t("t_and")} ${parts[parts.length - 1]}`
+
+/** Seconds as "0:42", "12:05" or "1:02:03". */
+const format_elapsed = (/** @type {number} */ seconds) => {
+    const s = Math.max(0, Math.floor(seconds))
+    const two = (/** @type {number} */ n) => String(n).padStart(2, "0")
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    return h > 0 ? `${h}:${two(m)}:${two(s % 60)}` : `${m}:${two(s % 60)}`
+}
+
+/**
+ * The text of the chip on a queued cell that waits for packages to install
+ * (#590, docs/packages.md "waiting cells"): "Waiting for dplyr to install
+ * · 1:05" while the install runs, timed from when it started; "Waiting for
+ * your OK to install dplyr" while a large download asks first (#37);
+ * "Waiting for dplyr" before the install starts. Each name opens the
+ * Packages tab. It reads the install's state from the notebook and ticks
+ * every second itself, since the cell doesn't re-render as the install
+ * moves on. The start is the server's clock, so the time is corrected by
+ * the panel's measured offset between the clocks, and left out until one
+ * is measured. The time is hidden from screen readers: the chip is a
+ * status region, and a clock in one would be read out every second.
+ */
+const WaitingChipText = ({ names }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const [now, set_now] = useState(() => Date.now() / 1000)
+    useEffect(() => {
+        const handle = setInterval(() => set_now(Date.now() / 1000), 1000)
+        return () => clearInterval(handle)
+    }, [])
+    const ember = pluto_actions.get_notebook()?.ember
+    const status = ember?.packages?.library?.status
+    const started_at = ember?.install_started_at
+    const offset = my_clock_is_ahead_by_now()
+    const shown = names.slice(0, 3).map(
+        (name) =>
+            html`<a
+                href="#"
+                onClick=${(e) => {
+                    e.preventDefault()
+                    open_bottom_right_panel("packages")
+                }}
+                >${name}</a
+            >`
+    )
+    const rest = names.length - shown.length
+    const joined = join_parts(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown)
+    if (status === "asking") return th("t_chip_waiting_ok", { names: joined })
+    if (status === "installing") {
+        if (started_at == null || offset == null) return th("t_chip_waiting_install_untimed", { names: joined })
+        return th("t_chip_waiting_install", {
+            names: joined,
+            time: html`<span class="ember-chip-time" aria-hidden="true">${format_elapsed(now - offset - started_at)}</span>`,
+        })
+    }
+    return th("t_chip_waiting", { names: joined })
+}
 
 const is_busy_rail = (/** @type {string} */ rail) => rail === "run" || rail === "queued"
 /** A run shows on the rail only once it has lasted SETTLE_MS; one already
@@ -582,7 +640,10 @@ export const Cell = ({
     const hold_chip_space = holding_chip_ref.current && !not_run_yet
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so
-    // running_disabled is checked first.
+    // running_disabled is checked first. Waiting for an install comes before
+    // Stale: the cell will run once the install ends, which matters more
+    // than why its old output is out of date.
+    const waiting_for = ember?.waiting_for ?? []
     const chip = running_disabled
         ? { icon: SlashCircleIcon, text: t("t_chip_disabled") }
         : depends_on_disabled_cells
@@ -599,15 +660,17 @@ export const Cell = ({
                     >`,
                 }),
             }
-          : not_run_yet
-            ? { icon: CircleIcon, text: t("t_chip_not_run") }
-            : hold_chip_space
-              ? { icon: CircleIcon, text: t("t_chip_not_run"), kind: "held" }
-              : stale
-                ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
-                : (ember?.settings?.length ?? 0) > 0
-                  ? settings_chip(ember.settings)
-                  : null
+          : waiting_for.length > 0
+            ? { icon: PackagesIcon, kind: "waiting", text: html`<${WaitingChipText} names=${waiting_for} />` }
+            : not_run_yet
+              ? { icon: CircleIcon, text: t("t_chip_not_run") }
+              : hold_chip_space
+                ? { icon: CircleIcon, text: t("t_chip_not_run"), kind: "held" }
+                : stale
+                  ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
+                  : (ember?.settings?.length ?? 0) > 0
+                    ? settings_chip(ember.settings)
+                    : null
     const settings_found = ember?.settings_found ?? []
     const load_notes = ember?.load_notes ?? []
     const changed_in_place = ember?.changed_in_place ?? []

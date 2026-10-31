@@ -1,6 +1,13 @@
 import { useContext, useState, useEffect } from "../imports/Preact.js"
 import { PlutoActionsContext } from "./PlutoContext.js"
 
+/** The last offset any useMyClockIsAheadBy() measured, for code that
+ * needs it without running its own sync (each sync is 18 round trips): the
+ * waiting chip's elapsed time (Cell.js, #590). `null` until the first sync
+ * ends, so nothing shows a time read off an unknown offset. */
+let latest_offset = /** @type {number?} */ (null)
+export const my_clock_is_ahead_by_now = () => latest_offset
+
 /** Request the current time from the server, compare with the local time, and return the current best estimate of our time difference. Updates regularly.
  * @param {{connected: boolean}} props
  */
@@ -31,7 +38,10 @@ export const useMyClockIsAheadBy = ({ connected }) => {
 
                 let diff = mytime - servertime
                 // console.info("My clock is ahead by ", diff, " s")
-                if (!isNaN(diff)) set_my_clock_is_ahead_by(diff)
+                if (!isNaN(diff)) {
+                    latest_offset = diff
+                    set_my_clock_is_ahead_by(diff)
+                }
             }
 
             // A sync still running when the connection drops fails its

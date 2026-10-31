@@ -939,8 +939,11 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
 test_that("a worker busy in a long cell ends when the server that started it is killed (#147)", {
   use_installed_ember()
   pidfile <- tempfile("worker-pid-")
+  # Written to a temporary name and renamed, so the test never reads the
+  # file between its creation and its line (#609).
   path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(
-    "writeLines(as.character(Sys.getpid()), %s); Sys.sleep(300)", deparse(pidfile)))))
+    "writeLines(as.character(Sys.getpid()), %1$s); file.rename(%1$s, %2$s); Sys.sleep(300)",
+    deparse(paste0(pidfile, ".tmp")), deparse(pidfile)))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
                  "repeat later::run_now(1)")
   server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
