@@ -7,7 +7,7 @@ Ember reads each cell's code to work out which variables it defines and
 which it uses, and keeps the notebook as a dependency graph. Cells run in
 the order the graph needs, not the order they appear on the page.
 
-> **Status:** early development, not yet on CRAN. Expect rough edges; see
+> **Status:** early development. Expect rough edges; see
 > [what's missing](#whats-missing).
 
 ## Why Ember
@@ -34,12 +34,18 @@ the order the graph needs, not the order they appear on the page.
 ## Installation
 
 ```r
-# install.packages("pak")
-pak::pak("jowch/Ember")
+install.packages("ember")
 ```
 
-Ember includes a little C code, so installing from source needs a compiler
-(Rtools on Windows, the Xcode command line tools on macOS).
+The development version is built from GitHub's main branch on r-universe:
+
+```r
+install.packages("ember", repos = c("https://jowch.r-universe.dev", "https://cloud.r-project.org"))
+```
+
+Both give binaries for Windows and macOS. Ember includes a little C code, so
+installing from source needs a compiler (Rtools on Windows, the Xcode command
+line tools on macOS).
 
 ## Getting started
 
