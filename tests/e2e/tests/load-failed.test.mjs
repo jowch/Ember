@@ -74,3 +74,18 @@ test("load failed: a stylesheet @import that keeps failing says so (#578)", asyn
   await bar.waitFor();
   assert.match(await bar.innerText(), /couldn't load the page's styles/);
 });
+
+test("load failed: a nested @import that keeps failing says so too (#578, review)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "load-failed-nested-css.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await (await browser.newContext()).newPage();
+  // themes/light.css is imported by editor.css, itself imported by all-styles.css.
+  await failing(page, "themes/light.css", Infinity);
+  await page.goto(openUrl(server, notebook));
+  const bar = page.locator("#ember-load-failed");
+  await bar.waitFor();
+  assert.match(await bar.innerText(), /couldn't load the page's styles/);
+});

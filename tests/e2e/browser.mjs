@@ -55,11 +55,17 @@ export async function launchBrowser() {
  * only the last one given, so the feature is added to that list rather
  * than passed alone. The list isn't public: it is read from the command
  * line of a browser server started for that, then closed. */
+let playwrightDisabled = null;
 async function withoutPortRandomization(options) {
-  const server = await chromium.launchServer(options);
-  const theirs = server.process().spawnargs.find((a) => a.startsWith("--disable-features="));
-  await server.close();
-  if (!theirs) throw new Error("Playwright's Chromium was launched without --disable-features; #412's workaround needs it");
+  // Read once per test process, not per launch: tests launch often.
+  playwrightDisabled ??= (async () => {
+    const server = await chromium.launchServer(options);
+    const theirs = server.process().spawnargs.find((a) => a.startsWith("--disable-features="));
+    await server.close();
+    if (!theirs) throw new Error("Playwright's Chromium was launched without --disable-features; #412's workaround needs it");
+    return theirs;
+  })();
+  const theirs = await playwrightDisabled;
   return { ...options, ignoreDefaultArgs: [theirs], args: [theirs + ",TcpPortRandomizationWin"] };
 }
 

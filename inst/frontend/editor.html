@@ -77,15 +77,25 @@
                 else document.addEventListener("DOMContentLoaded", function () { show(what); });
             }
             // A failed @import doesn't fail its stylesheet's <link>: the
-            // imported sheet is there, with no rules.
-            function emptyImport(sheet) {
-                try {
-                    var rules = sheet.cssRules;
-                    for (var i = 0; i < rules.length; i++) {
-                        var r = rules[i];
-                        if (r.type === 3 && (!r.styleSheet || r.styleSheet.cssRules.length === 0)) return r.href;
-                    }
-                } catch (e) {}
+            // imported sheet is missing, empty, or (in Chromium, for a
+            // nested import) refuses to give its rules. Imports nest
+            // (editor.css imports fonts.css and the themes), so the whole
+            // tree is checked. Every sheet Ember ships has rules: an empty
+            // one would count as failed.
+            function rulesOf(sheet) {
+                try { return sheet ? sheet.cssRules : null; } catch (e) { return null; }
+            }
+            function emptyImport(sheet, depth) {
+                var rules = rulesOf(sheet);
+                if (!rules || depth > 8) return null;
+                for (var i = 0; i < rules.length; i++) {
+                    var r = rules[i];
+                    if (r.type !== 3) continue;
+                    var inner = rulesOf(r.styleSheet);
+                    if (!inner || inner.length === 0) return r.href;
+                    var nested = emptyImport(r.styleSheet, depth + 1);
+                    if (nested) return nested;
+                }
                 return null;
             }
             window.addEventListener("error", function (ev) {
@@ -96,7 +106,7 @@
             document.addEventListener("load", function (ev) {
                 var el = ev.target;
                 if (!el || el.tagName !== "LINK" || !own(el)) return;
-                if (el.sheet && emptyImport(el.sheet)) failed("the page's styles");
+                if (el.sheet && emptyImport(el.sheet, 0)) failed("the page's styles");
             }, true);
             window.addEventListener("load", function () {
                 if (shown) return;
