@@ -599,44 +599,6 @@ test_that("emberui's own tests pass", {
 
 # ---- End to end ------------------------------------------------------------------
 
-#' The commit the stand-in universe says it built emberui from.
-UI_SHA <- "5ae01f2fb57e9e69be8a55c94f2f9e37c22c3ba2"
-
-#' A `file://` stand-in for r-universe holding emberui under `jowch`, laid
-#' out as fixtures/universe is: `jowch/api/packages/emberui` the JSON,
-#' `jowch/src/contrib` the build from inst/emberui, with the `Remote*`
-#' fields r-universe writes into a build's DESCRIPTION. Also an empty
-#' CRAN-like repository dated `date`, so nothing reaches the network.
-#' Returns the root.
-ui_universe <- function(date = "2026-09-01") {
-  root <- tempfile("ember-ui-universe-")
-  contrib <- file.path(root, "jowch", "src", "contrib")
-  api <- file.path(root, "jowch", "api", "packages")
-  cran <- file.path(root, "cran", date, "src", "contrib")
-  for (d in c(contrib, api, cran)) dir.create(d, recursive = TRUE)
-  file.create(file.path(cran, "PACKAGES"))
-  src <- file.path(root, "src")
-  dir.create(src)
-  file.copy(emberui_source(), src, recursive = TRUE)
-  src <- file.path(src, basename(emberui_source()))
-  remote <- c(RemoteUrl = "https://github.com/jowch/Ember", RemoteSha = UI_SHA, RemoteSubdir = "inst/emberui")
-  desc <- read.dcf(file.path(src, "DESCRIPTION"))
-  write.dcf(cbind(desc, t(remote)), file.path(src, "DESCRIPTION"))
-  res <- run_guarded(file.path(R.home("bin"), "R"), c("CMD", "build", "--no-manual", "--no-build-vignettes", src),
-                     wd = contrib, error_on_status = FALSE)
-  if (res$status != 0) stop("could not build emberui:\n", res$stderr)
-  tools::write_PACKAGES(contrib, type = "source")
-  info <- c(list(Package = "emberui", Version = unname(desc[1, "Version"])), as.list(remote),
-            list(NeedsCompilation = "no", `_dependencies` = list(list(package = "R", version = ">= 4.1.0", role = "Depends"))))
-  jsonlite::write_json(info, file.path(api, "emberui"), auto_unbox = TRUE)
-  root
-}
-
-ui_repos <- function(root) {
-  ember_repos(cran = paste0("file://", root, "/cran"), github = paste0("file://", github_fixture_dir()),
-              universe = paste0("file://", root, "/%s"))
-}
-
 test_that("set_input through the API reruns the readers with the new value, and keeps it when the input's cell reruns", {
   use_installed_ember()
   root <- ui_universe()

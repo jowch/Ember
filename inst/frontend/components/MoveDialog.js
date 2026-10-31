@@ -3,6 +3,7 @@ import { Dialog } from "../common/dialogs.js"
 import { FolderField } from "./FolderField.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { t } from "../common/lang.js"
+import { lost_connection_text } from "../common/lost_connection.js"
 
 /**
  * Rename or move a notebook, opened from the header's file name button in
@@ -55,6 +56,8 @@ export const MoveDialog = ({ path, shortpath, on_close }) => {
                             } else {
                                 close()
                             }
+                        } catch (e) {
+                            set_error(lost_connection_text(e))
                         } finally {
                             set_saving(false)
                         }

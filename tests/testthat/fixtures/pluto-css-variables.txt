@@ -42,8 +42,6 @@
 --dead-process-header-color
 --loading-header-color
 --disconnected-header-color
---loading-grad-color-1
---loading-grad-color-2
 --overlay-button-bg
 --overlay-button-border
 --overlay-button-border-save

@@ -165,10 +165,12 @@ test_that("rewrite_help_links() leaves no link that navigates away from the page
   expect_identical(rewrite_help_links(kept), kept)
 
   # A real page: every remaining link is @ref, an anchor or external.
-  rd <- utils:::.getHelpFile(utils::help("lm", package = "stats"))
+  rd_path <- as.character(utils::help("lm", package = "stats"))
+  rd <- utils:::.getHelpFile(rd_path)
   out <- tempfile(fileext = ".html")
   on.exit(unlink(out))
-  tools::Rd2HTML(rd, out, package = "stats", dynamic = TRUE)
+  # As help_lookup() calls it (inst/worker.R).
+  tools::Rd2HTML(rd, out, package = dirname(dirname(rd_path)), dynamic = TRUE)
   # The worker sends only the <body> (help_lookup(), inst/worker.R).
   body <- sub("(?s).*<body>", "", paste(readLines(out, warn = FALSE), collapse = "\n"), perl = TRUE)
   page <- help_reply_html(list(html = body, matches = list()))

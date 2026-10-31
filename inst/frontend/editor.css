@@ -45,6 +45,12 @@ body {
     background-color: var(--main-bg-color);
 }
 
+@media screen {
+    pluto-editor:not(.disable_ui) {
+        padding-top: var(--ember-header-height);
+    }
+}
+
 pluto-editor {
     flex: 1 1 auto;
     display: flex;
@@ -543,17 +549,21 @@ pluto-output details[open] summary {
 
 /* HEADER */
 
+/* Fixed, not sticky (#586): html's scroll-padding-top leaves the band a
+   sticky header sits in outside what counts as visible, so focusing one of
+   its controls (Tab, or a test's click) scrolled the page half a window to
+   "reach" it. A fixed box never needs scrolling to. The padding below
+   keeps the space it held in the flow. */
 header#pluto-nav {
-    position: sticky;
+    position: fixed;
     top: 0;
-    width: 100%;
+    left: 0;
+    right: 0;
     height: var(--ember-header-height);
     z-index: 60;
     background-color: var(--header-bg-color);
     transform: translateY(0px);
-    transition:
-        background-color 0.5s ease-in-out,
-        transform 0.25s cubic-bezier(0.18, 0.89, 0.49, 1.13);
+    transition: transform 0.25s cubic-bezier(0.18, 0.89, 0.49, 1.13);
     border-bottom: solid 1px var(--header-border-color);
     font-family: var(--ember-ui-font);
     font-weight: 400;
@@ -680,8 +690,6 @@ pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
-    position: sticky;
-    top: 0;
     backdrop-filter: blur(10px);
 }
 
@@ -939,6 +947,12 @@ pluto-editor.disconnected > header#pluto-nav {
 #ember-r-status:active {
     background: var(--ember-active);
 }
+/* ↑ or ↓ while the running cell is out of view; the click goes there
+   (#538). Shown at every width, next to the dot on a phone. */
+.ember-r-status-where {
+    color: var(--ember-run);
+    font-weight: 600;
+}
 @media (max-width: 640px) {
     #ember-r-status .ember-r-status-words {
         position: absolute;
@@ -953,6 +967,10 @@ pluto-editor.disconnected > header#pluto-nav {
         width: 20px;
         height: 20px;
         justify-content: center;
+    }
+    #ember-r-status:has(.ember-r-status-where) {
+        width: auto;
+        gap: 3px;
     }
 }
 
@@ -1377,8 +1395,8 @@ loading-bar {
     height: 6px;
     width: 10vw;
     /* background-color: #b1c9dd; */
-    background: linear-gradient(90deg, var(--loading-grad-color-1), var(--loading-grad-color-2), var(--loading-grad-color-1));
-    background-size: 100vw 100%;
+    /* The running rail's blue: the bar says the same thing the rail does. */
+    background: var(--ember-rail-run);
     position: fixed;
     top: 0px;
     left: 0px;
@@ -1388,16 +1406,6 @@ loading-bar {
         opacity linear 0.2s;
     opacity: 0;
     z-index: 12000;
-    animation: move-background 2s ease-in-out infinite;
-}
-
-@keyframes move-background {
-    0% {
-        background-position-x: 0vw;
-    }
-    100% {
-        background-position-x: 100vw;
-    }
 }
 
 .outline-frame {
@@ -2143,6 +2151,7 @@ dropruler {
     #helpbox-wrapper.open {
         width: 380px;
         box-shadow: var(--ember-panel-shadow);
+        animation: ember-slide-in 0.18s ease-out;
     }
 }
 @media (max-width: 640px) {
@@ -2154,6 +2163,19 @@ dropruler {
         border-radius: 14px 14px 0 0;
         border-left: 0;
         border-top: 1px solid var(--ember-line);
+        animation-name: ember-slide-up;
+    }
+}
+/* Docked (1240 px and up) the panel shares the page and appears in place;
+   over the page it slides in from its edge. */
+@keyframes ember-slide-in {
+    from {
+        transform: translateX(100%);
+    }
+}
+@keyframes ember-slide-up {
+    from {
+        transform: translateY(100%);
     }
 }
 
@@ -2743,14 +2765,14 @@ pluto-editor.disable_ui [data-cell-variable] {
 }
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable],
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-cell-variable] {
-    text-decoration-color: #d177e6;
+    text-decoration-color: var(--ember-accent);
     cursor: pointer;
 }
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover,
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover * {
-    /* This basically `color: #af5bc3`, but it works for emoji too!! */
+    /* The accent as the text colour, in a way that works for emoji too. */
     color: transparent !important;
-    text-shadow: 0 0 #af5bc3;
+    text-shadow: 0 0 var(--ember-accent);
 }
 
 /* Variable that is declared in the same cell */
@@ -2759,9 +2781,9 @@ pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover
     text-decoration: none;
 }
 [data-ctrl-down="true"][data-cell-variable]:hover * {
-    /* This basically `color: #af5bc3`, but it works for emoji too!! */
+    /* The accent as the text colour, in a way that works for emoji too. */
     color: transparent !important;
-    text-shadow: 0 0 #af5bc3;
+    text-shadow: 0 0 var(--ember-accent);
 }
 
 /* Lines the label up with the typed text: the list's border and padding
@@ -3092,6 +3114,24 @@ pluto-header-id-copy:focus-visible {
 
 .ember-dialog::backdrop {
     background: var(--ember-dialog-backdrop);
+}
+
+/* Menus and dialogs open with a short fade and a 4 px rise, so the eye
+   sees where they came from; they close at once. Reduced motion turns
+   this off (ember-forms.css). */
+.ember-dialog[open],
+.ember-menu,
+div.input_context_menu[role="menu"] {
+    animation: ember-pop 0.13s ease-out;
+}
+.ember-dialog[open]::backdrop {
+    animation: ember-fade-in 0.13s ease-out;
+}
+@keyframes ember-pop {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
 }
 
 .ember-dialog-title {

@@ -27,6 +27,42 @@ const use_narrow = (/** @type {number} */ max_width) => {
 }
 
 /**
+ * Where the running cell is while it is scrolled out of view: "up" or
+ * "down", or null while it is on screen or nothing runs, so the header can
+ * point to it and go there (#538). Under the sticky header counts as out
+ * of view.
+ *
+ * @param {import("./Editor.js").NotebookData} notebook
+ * @param {boolean} busy
+ * @returns {{ running_id: string?, where: "up"|"down"|null }}
+ */
+const use_running_cell_direction = (notebook, busy) => {
+    const running_id = busy ? (Object.entries(notebook.cell_results ?? {}).find(([, r]) => r.running)?.[0] ?? null) : null
+    const [where, set_where] = useState(/** @type {"up"|"down"|null} */ (null))
+    useEffect(() => {
+        set_where(null)
+        if (running_id == null) return
+        const cell = document.querySelector(`pluto-cell[id="${CSS.escape(running_id)}"]`)
+        if (cell == null) return
+        const header = document.querySelector("header#pluto-nav")?.getBoundingClientRect().height ?? 0
+        const observer = new IntersectionObserver(
+            ([entry]) => set_where(entry.isIntersecting ? null : entry.boundingClientRect.top < (entry.rootBounds?.top ?? header) ? "up" : "down"),
+            { rootMargin: `-${Math.round(header)}px 0px 0px 0px` }
+        )
+        observer.observe(cell)
+        return () => observer.disconnect()
+    }, [running_id])
+    return { running_id, where }
+}
+
+/** Scrolls the cell into the middle of the window, at once under reduced motion. */
+const scroll_to_cell = (/** @type {string} */ cell_id) =>
+    document.querySelector(`pluto-cell[id="${CSS.escape(cell_id)}"]`)?.scrollIntoView({
+        block: "center",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    })
+
+/**
  * The R status dot/words (ui-3.md, Header): shared between the header
  * button and the Status tab (ui-3-plan.md piece 5's "Status tab"). A run
  * shows only once it has lasted SETTLE_MS (useSettled.js).
@@ -115,6 +151,8 @@ export const Header = ({ notebook, connected, key_refused = false, unreachable =
 
     const narrow = use_narrow(640)
     const status = use_r_status({ connected, key_refused, unreachable, notebook })
+    const running = use_running_cell_direction(notebook, !!status.busy)
+    const status_label = running.where == null ? (status.title ?? status.words) : `${status.words}. ${t("t_ember_go_to_running_cell")}`
     const not_run = useSettled(notebook.ember?.not_run ?? 0, (count, shown) => count > shown)
 
     use_print_title(print_title)
@@ -158,12 +196,13 @@ export const Header = ({ notebook, connected, key_refused = false, unreachable =
             <button
                 id="ember-r-status"
                 type="button"
-                title=${status.title ?? status.words}
-                aria-label=${status.title ?? status.words}
-                onClick=${() => toggle("process")}
+                title=${status_label}
+                aria-label=${status_label}
+                onClick=${() => (running.where != null && running.running_id != null ? scroll_to_cell(running.running_id) : toggle("process"))}
             >
                 <span class=${`ember-dot ember-dot-${status.dot}`} aria-hidden="true"></span>
                 <span class="ember-r-status-words">${status.words}</span>
+                ${running.where == null ? null : html`<span class="ember-r-status-where" aria-hidden="true">${running.where === "up" ? "↑" : "↓"}</span>`}
             </button>
             ${status.busy ? html`<button class="ember-btn ember-fade-in" type="button" onClick=${on_interrupt}>${t("t_stop")}</button>` : null}
             ${narrow

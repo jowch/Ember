@@ -110,11 +110,15 @@ data_readers <- c(
   read_csv = "file", read_csv2 = "file", read_tsv = "file", read_delim = "file",
   read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
   read_rds = "file", vroom = "file",
-  # data.table, readxl, arrow, haven, jsonlite
+  # data.table, readxl, arrow and nanoparquet, haven, jsonlite
   fread = "input", read_excel = "path", read_xlsx = "path", read_xls = "path",
   read_parquet = "file", read_feather = "file", read_ipc_file = "file",
-  read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
-  read_xpt = "file", read_json = "path")
+  read_csv_arrow = "file", read_tsv_arrow = "file", read_delim_arrow = "file",
+  read_json_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
+  read_xpt = "file", read_json = "path",
+  # qs2, xml2, sf, foreign
+  qs_read = "file", qd_read = "file", read_xml = "x", read_html = "x",
+  st_read = "dsn", read_sf = "dsn", read.dta = "file", read.spss = "file", read.xport = "file")
 
 #' Functions that write a file, each with the argument that names it and
 #' its position (#276). They aren't watched: they tell the worker which

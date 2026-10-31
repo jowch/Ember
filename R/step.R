@@ -313,10 +313,14 @@ schedule <- function(state) {
     if (!is.null(waiting[[candidate]])) {
       # Leave it queued (it isn't blocked, just not ready yet) and look
       # further down the queue for something that can run now, dropping
-      # anything else along the way that can't (same rule as below).
+      # anything else along the way that can't (same rule as below). A
+      # cell downstream of a waiting one, by the graph or by what an edited
+      # cell's last run defined (run_graph()), waits with it: run now, it
+      # would read the waiting cell's old values (#604).
+      held <- reach(run_graph(state)$downstream, intersect(queue, names(waiting)))
       found <- NULL
       for (q in setdiff(queue, candidate)) {
-        if (!is.null(waiting[[q]])) next
+        if (!is.null(waiting[[q]]) || q %in% held) next
         if (can_run(state, q)) { found <- q; break }
         state$pending <- setdiff(state$pending, q)
       }
@@ -562,6 +566,11 @@ turn_off <- function(state, ids) {
 #' `code_differs` (state.R) still compares like for like, since
 #' `worker$running$code` is set from the cell's own code separately
 #' (`schedule()`, step.R).
+#'
+#' `defines` is the names the graph says the cell defines. A name that
+#' moved to it from another cell is still that cell's in the worker, whose
+#' next run would remove it after this cell set it; the worker hands it
+#' over first (`take_over_globals()`, #611).
 run_message <- function(state, id, token) {
   # A vector test, not a lookup by name per cell: those scan the names, and
   # this runs for every cell during Run all (#44).
@@ -577,7 +586,8 @@ run_message <- function(state, id, token) {
       inputs = if (!is_text) run_inputs(state, id),
       installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
       data = if (!is_text) run_data_files(state, id),
-      data_writes = if (!is_text) run_data_writes(state, id))
+      data_writes = if (!is_text) run_data_writes(state, id),
+      defines = if (!is_text) as.character(state$graph$cells[[id]]$definitions))
 }
 
 #' The writes part of a run message: each top-level expression that

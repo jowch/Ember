@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { artifactsDir } from "./server.mjs";
-import { untimed, waitingFor } from "./waits.mjs";
+import { addSection, untimed, waitingFor } from "./waits.mjs";
 
 function macCacheExecutable() {
   const base = path.join(os.homedir(), "Library", "Caches", "ms-playwright", "chromium-1234");
@@ -109,6 +109,31 @@ export function assertNoProblems(page) {
   }
 }
 
+/** Every openNotebook() still under way, with when each step of its open
+ * happened, for the report of a wait that never ends (waits.mjs). On
+ * #533's probe the wait between the socket's first frame and the first
+ * cell was 3 to 4 s for some first opens on Windows (#417), the step
+ * #529's open stalled in. #550 split it in two: the server building the
+ * notebook's first state, its answer to the page's first
+ * `update_notebook`, and then the page drawing it. These times say which
+ * of the two a slow open spent its time in. They are only printed, never
+ * checked. */
+const opening = new Set();
+addSection(() => [...opening].map((o) => {
+  const at = (t) => (t === undefined ? "not yet" : `${((t - o.start) / 1000).toFixed(2)} s`);
+  const took = (a, b) => (a !== undefined && b !== undefined ? ` (${((b - a) / 1000).toFixed(2)} s)` : "");
+  return `opening ${o.notebook}, started ${at(Date.now())} ago: socket open ${at(o.socket)}, ` +
+    `first update_notebook sent ${at(o.asked)}, first notebook_diff back ${at(o.answered)}${took(o.asked, o.answered)}, ` +
+    `first pluto-cell ${at(o.cell)}${took(o.answered, o.cell)}`;
+}).join("\n"));
+
+// A Pluto message's msgpack carries its type as the string after the key
+// "type": a4 "type", then the type's own fixstr header and bytes.
+const typeBytes = (type) => Buffer.concat([Buffer.from([0xa4]), Buffer.from("type"), Buffer.from([0xa0 | type.length]), Buffer.from(type)]);
+const UPDATE_NOTEBOOK = typeBytes("update_notebook");
+const NOTEBOOK_DIFF = typeBytes("notebook_diff");
+const isType = (payload, bytes) => Buffer.isBuffer(payload) && payload.includes(bytes);
+
 /** Open a notebook through /open (the URL a bookmark would use), wait for
  * the editor to finish loading, and return the id from the resulting
  * /edit?id=... URL. `origin` is the server's base URL (`http://host:port/`,
@@ -132,24 +157,35 @@ export async function openNotebook(page, origin, secret, notebookPath) {
   });
   failed.catch(() => {});
   page.on("requestfailed", onFailed);
+  const open = { notebook: path.basename(notebookPath), start: Date.now() };
+  const onSocket = (ws) => {
+    open.socket ??= Date.now();
+    ws.on("framesent", (f) => { if (opening.has(open) && isType(f.payload, UPDATE_NOTEBOOK)) open.asked ??= Date.now(); });
+    ws.on("framereceived", (f) => { if (opening.has(open) && isType(f.payload, NOTEBOOK_DIFF)) open.answered ??= Date.now(); });
+  };
+  page.on("websocket", onSocket);
+  opening.add(open);
   try {
     const loaded = (async () => {
       await page.goto(url);
       await page.waitForSelector("pluto-cell");
+      open.cell = Date.now();
       await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
     })();
     // After a failed load, these waits end when the test closes the page.
     loaded.catch(() => {});
     await Promise.race([failed, loaded]);
+    // Pluto draws a long notebook's cells in chunks, after `loading` drops:
+    // wait for every cell, so a raw querySelector of a late one finds it (#428).
+    await page.waitForFunction(() => {
+      const order = window.editor_state?.notebook?.cell_order;
+      return Array.isArray(order) && order.every((id) => document.querySelector(`pluto-cell[id="${id}"]`));
+    });
   } finally {
     page.off("requestfailed", onFailed);
+    page.off("websocket", onSocket);
+    opening.delete(open);
   }
-  // Pluto draws a long notebook's cells in chunks, after `loading` drops:
-  // wait for every cell, so a raw querySelector of a late one finds it (#428).
-  await page.waitForFunction(() => {
-    const order = window.editor_state?.notebook?.cell_order;
-    return Array.isArray(order) && order.every((id) => document.querySelector(`pluto-cell[id="${id}"]`));
-  });
   return new URL(page.url()).searchParams.get("id");
 }
 

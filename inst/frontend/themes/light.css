@@ -30,15 +30,19 @@
     --ember-red: #a8322a;
     --ember-red-bg: #f8e6e3;
     --ember-rail-idle: #d3d8d2;
-    --ember-rail-run: #7f9ccc;
-    --ember-rail-due: #cdb06e;
-    --ember-rail-err: #d48b83;
+    /* Running, edited and error reach 3 : 1 on the page, as the dark ones
+       do (#538); idle stays faint on purpose: nothing is happening. */
+    --ember-rail-run: #6f8fc5;
+    --ember-rail-due: #ac893b;
+    --ember-rail-err: #cc766c;
     --ember-err-bg: #faeae7;
     --ember-err-line: #efc9c3;
     --ember-due-bg: #f6eedb;
     --ember-due-line: #e2cc95;
     --ember-wash: #eceeea;
     --ember-dis-bg: #e6e9e5;
+    /* A stale output, greyed, still reads at 4.5 : 1 on the wash (#538). */
+    --ember-stale-opacity: 0.65;
     --ember-syn-kw: #7b4a91;
     --ember-syn-fn: #22715f;
     --ember-syn-str: #5d6b12;
@@ -149,7 +153,9 @@
     --pluto-tree-color: rgb(0 0 0 / 38%);
 
     /*pluto cell styling*/
-    --selected-cell-bg-color: rgb(34 113 95 / 35%);
+    /* The selected cell's band: 3 : 1 against the page and the code box
+       (WCAG non-text contrast); 35% was 1.7 : 1. */
+    --selected-cell-bg-color: rgb(34 113 95 / 80%);
     --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #ccc;
@@ -172,10 +178,6 @@
     --dead-process-header-color: rgb(230 88 46 / 38%);
     --loading-header-color: hsla(290, 10%, 80%, 0.5);
     --disconnected-header-color: rgba(255, 169, 114, 0.56);
-
-    /*loading bar*/
-    --loading-grad-color-1: #f1dba9;
-    --loading-grad-color-2: #d7d7d0;
 
     /*saveall container*/
     --overlay-button-border: hsl(0 4% 91% / 1);

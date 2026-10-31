@@ -454,7 +454,8 @@ snapshot_of <- function(state) {
 #' * `running`: `state$worker$running`, or `NULL`; `running_idx` its cell's
 #'   position in `ids`, or `NA`.
 #' * `queued`: logical, position -> queued (not the running cell).
-#' * `waiting`: list, position -> `waiting_cells()`'s value, or `NULL`.
+#' * `waiting`: list, position -> `waiting_cells()`'s value, or `NULL`; all
+#'   `NULL` once the target library failed, as `schedule()` treats it.
 #' * `errors_by_cell`: list, position -> the graph errors naming it
 #'   (`cell_errors(graph, id)`'s result), grouped once over `graph$errors`.
 #'   A cell with its own graph error can't run (`can_run()`, step.R); it
@@ -492,7 +493,9 @@ view_context <- function(state) {
   queued_ids <- setdiff(run_order(graph, state$pending), running_cell)
   queued <- ids %in% queued_ids
 
-  waiting <- waiting_cells(state)
+  # As `schedule()`: once the target library failed, waiting cells run
+  # anyway (and show the failure), so nothing is waiting any more.
+  waiting <- if (identical(state$packages$target$status, "failed")) list() else waiting_cells(state)
   waiting_vec <- vector("list", n)
   if (length(waiting) > 0) {
     at <- match(names(waiting), ids)
@@ -572,10 +575,10 @@ cell_variables <- function(result, off) {
 #' message naming the span, since a code span that starts with `r `
 #' (`` `r = 0.5` ``) runs as R, as in knitr, whether or not it was meant to.
 #' The span is the first one that fails to parse on its own, with its own
-#' message. The graph's error line can't say: it parses `inline_code()`,
-#' the spans joined one per line, and an unclosed span reads on into the
-#' next one, which then takes the blame (#574). Unchanged when every span
-#' parses alone.
+#' message. `inline_code()` stops after that span (#574), so the graph's
+#' error is that span's, but its line counts spans, not the cell's lines,
+#' and its message says nothing of the span.
+#' Unchanged when every span parses alone.
 span_parse_error <- function(e, code) {
   spans <- inline_spans(code)
   for (k in seq_len(nrow(spans))) {

@@ -410,9 +410,9 @@ test_that("a reader with a computed path records no file and no note: the run le
   expect_true("f" %in% refs(a))
 })
 
-test_that("text, URLs and function bodies record no file (#276)", {
+test_that("text, URLs, inline XML and function bodies record no file (#276)", {
   for (code in c('read.csv(text = "a,b\\n1,2")',
-                 'read.csv("https://example.org/d.csv")',
+                 'read.csv("https://example.org/d.csv")', 'xml2::read_xml("<a/>")',
                  'g <- function() read.csv("d.csv")',
                  'readLines(textConnection(x))', 'readRDS(url(u))')) {
     a <- read_cell(code)

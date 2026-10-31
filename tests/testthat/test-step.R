@@ -96,6 +96,22 @@ test_that("a text cell's parse error names its inline span and points at the spa
   expect_match(v$errors[[1]]$message, "inline span `r mean(c(1, 2)` on line 1: unexpected end of input", fixed = TRUE)
 })
 
+test_that("an unfinished inline span is a parse error before the cell runs, not joined to the next span (#574)", {
+  # Joined, `1 +` and `2` read as `1 + 2`; the worker runs `1 +` alone and
+  # fails, so the graph must say so first.
+  s <- fake_state(list(S = cell(""), T = cell("#' A `r 1 +`\n#' B `r 2` end", kind = "markdown")))
+  v <- snapshot_of(s)$cells[["T"]]
+  expect_length(v$errors, 1)
+  expect_equal(v$errors[[1]]$kind, "parse")
+  expect_equal(v$errors[[1]]$lines$line, 1L)
+  expect_match(v$errors[[1]]$message, "inline span `r 1 +` on line 1: unexpected end of input", fixed = TRUE)
+
+  # `f(` and `x)` aren't one call that reads f and x.
+  s <- fake_state(list(S = cell(""), X = cell("x <- 1"), T = cell("#' A `r f(`\n#' B `r x)` end", kind = "markdown")))
+  expect_length(snapshot_of(s)$cells[["T"]]$errors, 1)
+  expect_false("x" %in% s$graph$analyses$T$references$name)
+})
+
 test_that("running a cell with a cycle, double definition or mixed text clears code_differs; an unrun edit keeps it", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 1"),
                        C = cell("c <- 1"), D = cell("d <- 1")))

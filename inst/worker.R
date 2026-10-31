@@ -36,7 +36,8 @@
 #                applied over the baseline first; apply_settings_context()),
 #                formulas (list of formula_site),
 #                fig (list(width, height, problems), inches: the figure
-#                size to open the plot device at).
+#                size to open the plot device at), defines (the names
+#                the graph says the cell defines: take_over_globals()).
 #                For role "text", each line of `code` is one inline
 #                expression (a text cell's `` `r expr` `` spans, one per
 #                line); the report's `output` is an "inline" display
@@ -572,6 +573,7 @@ run_cell <- function(msg) {
     # interrupts a cell within milliseconds of it starting).
     cell_order <<- msg$order
     remove_cell(msg$cell)
+    take_over_globals(msg$cell, msg$defines)
     apply_settings_context(msg$settings %||% character())
 
     before_names <- ls(globalenv(), all.names = TRUE)
@@ -839,6 +841,7 @@ run_cell <- function(msg) {
       console <- NULL
       running <<- NULL
 
+      seal_registrations(msg$cell)
       facts <- compare_globals(before_names, before)
       owned[[msg$cell]] <<- facts$created
       rc$created <- facts$created
@@ -1035,8 +1038,18 @@ data_run <- NULL
 data_absolute <- function(p) grepl("^(/|~|[A-Za-z]:|\\\\\\\\)", p)
 
 #' A path with its folder and links resolved and "/" between parts, for
-#' telling two spellings of one file apart.
-data_canon <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
+#' telling two spellings of one file apart. normalizePath() leaves a
+#' missing file's path as it is ("./later.txt" stays), so for one its
+#' folder is resolved instead (#564).
+data_canon <- function(p) {
+  vapply(p, function(p) {
+    if (!file.exists(p)) {
+      dir <- dirname(p)
+      if (!identical(dir, p) && !identical(dir, ".")) return(file.path(data_canon(dir), basename(p)))
+    }
+    tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
+  }, "", USE.NAMES = FALSE)
+}
 
 #' The folders whose files are R's or the session's, not the notebook's
 #' data: the libraries (a package reading its own files), R itself, and
@@ -1066,9 +1079,16 @@ data_reader_args <- list(
   vroom = c(vroom = "file"),
   data.table = c(fread = "input"),
   readxl = c(read_excel = "path", read_xlsx = "path", read_xls = "path"),
-  arrow = c(read_parquet = "file", read_feather = "file", read_ipc_file = "file", read_csv_arrow = "file"),
+  arrow = c(read_parquet = "file", read_feather = "file", read_ipc_file = "file", read_csv_arrow = "file",
+            read_tsv_arrow = "file", read_delim_arrow = "file", read_json_arrow = "file"),
+  nanoparquet = c(read_parquet = "file"),
   haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
-  jsonlite = c(read_json = "path"))
+  jsonlite = c(read_json = "path"),
+  qs2 = c(qs_read = "file", qd_read = "file"),
+  xml2 = c(read_xml = "x", read_html = "x"),
+  # read_sf() takes `...` and calls st_read(), whose hook sees its file.
+  sf = c(st_read = "dsn", read_sf = "dsn"),
+  foreign = c(read.dta = "file", read.spss = "file", read.xport = "file"))
 
 #' The readers that open their path through a connection, the connections
 #' whose file Ember can watch, and the classes that read no file (text, a
@@ -1076,6 +1096,20 @@ data_reader_args <- list(
 #' A reader's second argument that names its file, taken when the first
 #' gives none (rules.R's walker also takes `file` for any reader).
 data_reader_alt <- list(fread = "file")
+#' Whether reader `name` takes `value`, a file it was given that doesn't
+#' exist, for a file: then it is watched, so the cell reruns once the file
+#' appears (#564). The readers' own rules: `fread()` takes an `input` with
+#' a space as a shell command, xml2 takes an `x` with "<" or ">" as XML.
+data_reader_takes_file <- function(name, value) {
+  if (!is.character(value) || length(value) != 1) return(TRUE)
+  switch(name,
+    fread = !grepl(" ", value, fixed = TRUE),
+    read_xml = , read_html = !grepl("<|>", value),
+    # GDAL's own names: a driver prefix ("PG:dbname=d") or a virtual file
+    # system ("/vsizip/a.zip/b.shp"). One letter and a colon is a drive.
+    st_read = !grepl("^[A-Za-z][A-Za-z0-9_]+:|^/vsi", value),
+    TRUE)
+}
 data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
 data_base_hooked <- c("readLines", "readRDS", "load")
 data_file_classes <- c("file", "gzfile", "bzfile", "xzfile", "zstdfile", "unz")
@@ -1098,7 +1132,7 @@ data_no_file_classes <- c("textConnection", "rawConnection", "url", "url-libcurl
 #' sourcing, which Ember already watches. A reader whose argument is
 #' neither a path nor a known connection goes in `unresolved`, for the
 #' note that Ember can't tell which file it read.
-data_learn <- function(value, reader = NULL, mode = "r") {
+data_learn <- function(value, reader = NULL, mode = "r", always_file = FALSE) {
   run <- data_run
   if (is.null(run) || is.null(running) || length(load_stack) > 0) return(invisible())
   write <- startsWith(mode, "w") || startsWith(mode, "a")
@@ -1146,10 +1180,11 @@ data_learn <- function(value, reader = NULL, mode = "r") {
     if (write || full %in% run$sourced || any(startsWith(full, run$skip))) next
     info <- tryCatch(file.info(full, extra_cols = FALSE), error = function(e) NULL)
     if (is.null(info) || isTRUE(info$isdir)) next
-    # A missing file is watched only when a connection was opened to read
-    # it: then the cell reruns once it appears. A package reader's missing
-    # "path" may be a command or data (fread("grep x f.csv")).
-    if (is.na(info$mtime) && (!is.null(reader) || !startsWith(mode, "r"))) next
+    # A missing file is watched when a connection was opened to read it,
+    # or a reader takes it for a file (#564): then the cell reruns once it
+    # appears. A reader may take it for a command or data instead
+    # (fread("grep x f.csv"), read_xml("<a/>")).
+    if (is.na(info$mtime) && ((!is.null(reader) && !always_file) || !startsWith(mode, "r"))) next
     key <- if (startsWith(full, run$home)) substring(full, nchar(run$home) + 1L) else full
     writes <- integer()
     for (w in run$writes) if (is.null(w$full) || identical(w$full, full)) writes <- c(writes, w$index)
@@ -1193,6 +1228,9 @@ ember_data_read <- function(name, value, alt) {
   if (missing(value) || identical(value, "")) {
     if (missing(alt)) return(invisible())
     value <- alt
+    always_file <- TRUE
+  } else {
+    always_file <- data_reader_takes_file(name, value)
   }
   if (inherits(value, "connection")) {
     # read.table() calls scan() on its connection several times: a
@@ -1207,7 +1245,27 @@ ember_data_read <- function(name, value, alt) {
     # whose hook sees it.
     return(invisible())
   }
-  data_learn(value, reader = name)
+  data_learn(value, reader = name, always_file = always_file)
+  # A shapefile's other files are watched when it has them: one it lacks
+  # (often .cpg) isn't a file the read tried.
+  if (identical(name, "st_read") && is.character(value) && always_file) {
+    parts <- data_shapefile_parts(value)
+    if (length(parts) > 0) data_learn(parts, reader = name)
+  }
+}
+
+#' For each shapefile among `paths`, the files read with it: its
+#' attributes (.dbf), index (.shx), projection (.prj) and encoding (.cpg),
+#' in the .shp's case.
+data_shapefile_parts <- function(paths) {
+  shp <- paths[grepl("[.]shp$", paths, ignore.case = TRUE)]
+  if (length(shp) == 0) return(character())
+  parts <- lapply(shp, function(p) {
+    ext <- c(".dbf", ".shx", ".prj", ".cpg")
+    if (endsWith(p, ".SHP")) ext <- toupper(ext)
+    paste0(substr(p, 1L, nchar(p) - 4L), ext)
+  })
+  unlist(parts)
 }
 
 #' `fun` with `hook` run first in its body, in its own environment, so
@@ -1585,15 +1643,53 @@ record_registration <- function(r) {
   registrations[[running$cell]] <<- c(registrations[[running$cell]], list(r))
 }
 
+#' The method a registration's key holds now: the S3 table's entry, or
+#' the S4 method for exactly that signature. `NULL` for none.
+registered_now <- function(r) {
+  if (identical(r$kind, "s3")) {
+    table <- r$defenv[[".__S3MethodsTable__."]]
+    if (is.null(table) || !exists(r$key, envir = table, inherits = FALSE)) return(NULL)
+    get(r$key, envir = table, inherits = FALSE)
+  } else {
+    tryCatch(methods::getMethod(r$f, r$signature, optional = TRUE, where = globalenv()),
+             error = function(e) NULL)
+  }
+}
+
+#' After a cell's run, record in each of its registrations the method it
+#' left (`new`), so undo_registrations() can tell when another cell has
+#' since registered its own (#611).
+seal_registrations <- function(cell) {
+  regs <- registrations[[cell]]
+  if (length(regs) == 0) return(invisible())
+  for (k in seq_along(regs)) regs[[k]]["new"] <- list(registered_now(regs[[k]]))
+  registrations[[cell]] <<- regs
+}
+
 #' Undo a cell's method registrations, newest first, so two registrations
 #' of one method in a cell restore what was there before the first.
+#' A method that is no longer the one the cell's run left is another
+#' cell's now and stays: a generic and its method moved from C4 to C1
+#' would otherwise lose the method C1 just set when C4 next starts (#611).
+#' Methods are compared with their srcrefs, which each run's parse makes
+#' new, so the same code registered by C1 isn't taken for C4's.
 undo_registrations <- function(cell) {
   regs <- registrations[[cell]]
   registrations[[cell]] <<- NULL
   if (length(regs) == 0) return(invisible())
   undoing <<- TRUE
   on.exit(undoing <<- FALSE)
+  # Decided once per method, at the newest registration of it, before any
+  # undo changes what it holds.
+  foreign <- character()
+  seen <- character()
   for (r in rev(regs)) {
+    id <- if (identical(r$kind, "s3")) paste("s3", r$key) else paste(c("s4", r$f, r$signature), collapse = "\r")
+    if (!(id %in% seen)) {
+      seen <- c(seen, id)
+      if ("new" %in% names(r) && !identical(registered_now(r), r$new, ignore.srcref = FALSE)) foreign <- c(foreign, id)
+    }
+    if (id %in% foreign) next
     tryCatch({
       if (identical(r$kind, "s3")) {
         table <- r$defenv[[".__S3MethodsTable__."]]
@@ -1608,6 +1704,27 @@ undo_registrations <- function(cell) {
         suppressMessages(methods::setMethod(r$f, r$signature, r$old, where = globalenv()))
       }
     }, error = function(e) NULL)
+  }
+  invisible()
+}
+
+#' Hand `cell` the names it now defines (`defines`, from the graph) that
+#' another cell's earlier run created, before it runs: remove each, as
+#' that cell's rerun would, and take it out of that cell's globals. A
+#' definition moved from C4 to C1 otherwise stays C4's, and C4's next run
+#' removes the value C1 just set (#611). If C1's run doesn't set it, it
+#' stays gone, as it would be in a fresh session.
+take_over_globals <- function(cell, defines) {
+  if (length(defines) == 0) return(invisible())
+  others <- setdiff(names(owned), cell)
+  # One vector test first: this runs before every cell, and a loop over
+  # every cell's globals costs a Run all of thousands of cells (#44).
+  if (!any(unlist(owned[others], use.names = FALSE) %in% defines)) return(invisible())
+  for (other in others) {
+    moved <- intersect(owned[[other]], defines)
+    if (length(moved) == 0) next
+    remove_globals(moved)
+    owned[[other]] <<- setdiff(owned[[other]], moved)
   }
   invisible()
 }
@@ -4481,7 +4598,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     rd <- utils:::.getHelpFile(rd_path)
     out <- tempfile(fileext = ".html")
     on.exit(unlink(out), add = TRUE)
-    tools::Rd2HTML(rd, out, package = pkg_name, dynamic = TRUE)
+    # The package's own folder, not its name: Rd2HTML reads the version for
+    # the page's footer from its DESCRIPTION. Given only a name, R from 4.7
+    # leaves the footer out.
+    tools::Rd2HTML(rd, out, package = dirname(dirname(rd_path)), dynamic = TRUE)
     full <- paste(readLines(out, warn = FALSE), collapse = "\n")
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)

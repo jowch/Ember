@@ -2754,6 +2754,9 @@ test_that("help() (45)", {
   expect_match(m$html, "Arithmetic Mean")
   expect_no_match(m$html, "<html")
   expect_no_match(m$html, "<head")
+  # The footer names the package and its version, which R-devel only
+  # finds from the package's folder (help_lookup()).
+  expect_match(m$html, "[Package <em>base</em> version ", fixed = TRUE)
 
   h$send(list(type = "help", id = 2L, topic = "no_such_topic_xyz", package = NULL))
   m2 <- h$receive()
@@ -3149,6 +3152,37 @@ test_that("a missing file a run tried to read is watched, so the cell reruns onc
   expect_identical(r$data_seen[[f]], "missing")
 })
 
+test_that("a package reader's missing file is watched, unless the reader takes it for a command or XML (#564)", {
+  skip_if_not_installed("data.table")
+  skip_if_not_installed("readr")
+  skip_if_not_installed("xml2")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- normalizePath(tempdir(), winslash = "/")
+  nope <- function(ext) file.path(d, basename(tempfile("ember-missing-", fileext = ext)))
+  f1 <- nope(".csv")
+  f2 <- nope(".csv")
+  f3 <- nope(".csv")
+  f4 <- nope(".xml")
+  r1 <- run_and_wait(h, "a", 1L, sprintf("x <- readr::read_csv(%s, show_col_types = FALSE)", deparse(f1)))
+  expect_identical(r1$status, "error")
+  expect_identical(r1$data_seen[[f1]], "missing")
+  r2 <- run_and_wait(h, "b", 2L, sprintf("x <- data.table::fread(file = %s)", deparse(f2)))
+  expect_identical(r2$status, "error")
+  expect_identical(r2$data_seen[[f2]], "missing")
+  # fread()'s input is a file unless it has a space: then it is a command.
+  r3 <- run_and_wait(h, "c", 3L, sprintf("x <- data.table::fread(%s)", deparse(f3)))
+  expect_identical(r3$status, "error")
+  expect_identical(r3$data_seen[[f3]], "missing")
+  cmd <- paste("cat", f3)
+  r4 <- run_and_wait(h, "d", 4L, sprintf("x <- try(data.table::fread(%s), silent = TRUE)", deparse(cmd)))
+  expect_null(r4$data_seen[[cmd]])
+  expect_null(r4$data_seen[[f3]])
+  r5 <- run_and_wait(h, "e", 5L, sprintf("x <- xml2::read_xml(%s)", deparse(f4)))
+  expect_identical(r5$status, "error")
+  expect_identical(r5$data_seen[[f4]], "missing")
+})
+
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
   h <- worker_harness(extra_libs = .libPaths())
@@ -3179,6 +3213,124 @@ test_that("a readr reader is learned once readr loads, by :: or attached", {
   r2 <- run_and_wait(h, "b", 2L, sprintf('library(readr)\nc <- read_csv(file.path(%s, "c.csv"), show_col_types = FALSE)', deparse(d)))
   expect_identical(r2$status, "ok")
   expect_identical(names(r2$data_seen), file.path(d, "c.csv"))
+})
+
+#' Run `code` (with `D` set to a fresh folder that `setup(d)` fills) in a
+#' worker and check that the run learned exactly the files in `want`.
+expect_learns <- function(setup, code, want) {
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  setup(d)
+  r <- run_and_wait(h, "a", 1L, paste(c(sprintf("D <- %s", deparse(d)), code), collapse = "\n"))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_setequal(names(r$data_seen), file.path(d, want))
+  expect_length(r$data_unresolved, 0)
+}
+
+test_that("nanoparquet's read_parquet() is learned once nanoparquet loads", {
+  skip_if_not_installed("nanoparquet")
+  expect_learns(function(d) nanoparquet::write_parquet(data.frame(x = 1:2), file.path(d, "n.parquet")),
+                'n <- nanoparquet::read_parquet(file.path(D, "n.parquet"))', "n.parquet")
+})
+
+test_that("qs2's qs_read() and qd_read() are learned once qs2 loads", {
+  skip_if_not_installed("qs2")
+  expect_learns(function(d) {
+                  qs2::qs_save(data.frame(x = 1:2), file.path(d, "q.qs2"))
+                  qs2::qd_save(data.frame(x = 1:2), file.path(d, "q.qdata"))
+                },
+                c('q1 <- qs2::qs_read(file.path(D, "q.qs2"))', 'q2 <- qs2::qd_read(file.path(D, "q.qdata"))'),
+                c("q.qs2", "q.qdata"))
+})
+
+test_that("xml2's read_xml() and read_html() are learned once xml2 loads, and inline XML isn't", {
+  skip_if_not_installed("xml2")
+  expect_learns(function(d) {
+                  writeLines("<a><b>1</b></a>", file.path(d, "x.xml"))
+                  writeLines("<html><body><p>1</p></body></html>", file.path(d, "x.html"))
+                },
+                c('x1 <- xml2::read_xml(file.path(D, "x.xml"))', 'x2 <- xml2::read_html(file.path(D, "x.html"))',
+                  'x3 <- xml2::read_xml("<a/>")'),
+                c("x.xml", "x.html"))
+})
+
+test_that("arrow's delimited and JSON readers are learned once arrow loads", {
+  # arrow isn't in Suggests (a large install for one test), so CI skips this; run locally with it installed.
+  skip_if_not_installed("arrow")
+  expect_learns(function(d) {
+                  writeLines("x,y\n1,2", file.path(d, "a.csv"))
+                  writeLines("x\ty\n1\t2", file.path(d, "a.tsv"))
+                  writeLines('{"x":1}', file.path(d, "a.json"))
+                },
+                c('a1 <- arrow::read_delim_arrow(file.path(D, "a.csv"))', 'a2 <- arrow::read_tsv_arrow(file.path(D, "a.tsv"))',
+                  'a3 <- arrow::read_json_arrow(file.path(D, "a.json"))'),
+                c("a.csv", "a.tsv", "a.json"))
+})
+
+test_that("foreign's read.dta(), read.spss() and read.xport() are learned once foreign loads", {
+  skip_if_not_installed("foreign")
+  expect_learns(function(d) {
+                  foreign::write.dta(data.frame(x = 1:2), file.path(d, "f.dta"))
+                  file.copy(system.file("files", "electric.sav", package = "foreign"), file.path(d, "f.sav"))
+                },
+                c('f1 <- foreign::read.dta(file.path(D, "f.dta"))',
+                  'f2 <- suppressWarnings(foreign::read.spss(file.path(D, "f.sav"), to.data.frame = TRUE))'),
+                c("f.dta", "f.sav"))
+  # foreign can't write a SAS transport file; haven can. haven isn't in
+  # Suggests, so it is named only in code the worker runs.
+  skip_if_not_installed("haven")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  f <- file.path(normalizePath(tempdir(), winslash = "/"), basename(tempfile("ember-xpt-", fileext = ".xpt")))
+  w <- run_and_wait(h, "w", 1L, sprintf("haven::write_xpt(data.frame(x = 1:2), %s, version = 5, name = \"F\")", deparse(f)))
+  expect_identical(w$status, "ok", info = w$error$message)
+  r <- run_and_wait(h, "a", 2L, sprintf("f3 <- foreign::read.xport(%s)", deparse(f)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_identical(names(r$data_seen), f)
+})
+
+test_that("sf's st_read() and read_sf() are learned with a shapefile's other files", {
+  # sf needs GDAL, so it isn't in Suggests and CI skips this; run locally with it installed.
+  skip_if_not_installed("sf")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  # sf is named only in code the worker runs, since it isn't in Suggests.
+  w <- run_and_wait(h, "w", 1L, sprintf(paste(
+    'D <- %s',
+    'pts <- sf::st_sf(a = 1:2, geometry = sf::st_sfc(sf::st_point(c(1, 2)), sf::st_point(c(3, 4)), crs = 4326))',
+    'sf::st_write(pts, file.path(D, "p.shp"), quiet = TRUE)',
+    'sf::st_write(pts, file.path(D, "g.gpkg"), quiet = TRUE)', sep = "\n"), deparse(d)))
+  expect_identical(w$status, "ok", info = w$error$message)
+  shp <- list.files(d, pattern = "^p[.]")
+  expect_true(all(c("p.shp", "p.dbf", "p.shx", "p.prj") %in% shp))
+  r <- run_and_wait(h, "a", 2L, 'p <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))')
+  expect_identical(r$status, "ok", info = r$error$message)
+  # A part the shapefile doesn't have (often .cpg) isn't watched.
+  expect_setequal(names(r$data_seen), file.path(d, c(shp, "g.gpkg")))
+  expect_length(r$data_unresolved, 0)
+})
+
+test_that("a shapefile's other files are read with it, in its case", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_identical(e$data_shapefile_parts("a.csv"), character())
+  expect_identical(e$data_shapefile_parts(c("d/x.shp", "Y.SHP")),
+                   c("d/x.dbf", "d/x.shx", "d/x.prj", "d/x.cpg", "Y.DBF", "Y.SHX", "Y.PRJ", "Y.CPG"))
+})
+
+test_that("sf's dsn is a file unless it is a GDAL driver string or virtual path", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_true(e$data_reader_takes_file("st_read", "data/x.shp"))
+  expect_true(e$data_reader_takes_file("st_read", "C:/data/x.shp"))
+  expect_false(e$data_reader_takes_file("st_read", "PG:dbname=d"))
+  expect_false(e$data_reader_takes_file("st_read", "/vsizip/a.zip/b.shp"))
 })
 
 test_that("the readers the worker traces are rules.R's data_readers", {
