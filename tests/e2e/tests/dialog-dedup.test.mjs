@@ -40,3 +40,49 @@ test("dialogs.js: a second ask()/tell() with the same key is dropped, not queued
 
   assertNoProblems(page);
 });
+
+test("dialogs.js: a dismissed dialog leaves the queue without its close event, so the next one shows (#491)", async (t) => {
+  // On a macOS runner, dismiss() closed "Can't reach Ember here" and no
+  // close event followed, so "Ember restarted" stayed queued behind it.
+  // The stub closes the element as close() does, without the event.
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "dialog-no-close-event.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const result = await page.evaluate(async () => {
+    const mod = await import("./common/dialogs.js");
+    const real_close = HTMLDialogElement.prototype.close;
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    const shown = () => document.querySelector("dialog.ember-dialog[open] .ember-dialog-text")?.textContent ?? null;
+    const settle = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    try {
+      const out = {};
+      // dismiss(), as tell_key_refused() uses it.
+      mod.tell({ body: "unreachable", key: "no-close-a" });
+      await settle();
+      out.first = shown();
+      mod.dismiss("no-close-a");
+      mod.tell({ body: "restarted", key: "no-close-b" });
+      await settle();
+      out.after_dismiss = shown();
+      document.querySelector("dialog.ember-dialog[open] button.primary")?.click();
+      await settle();
+      out.left_open = document.querySelectorAll("dialog.ember-dialog[open]").length;
+      out.queue = window.ember_dialog_queue.length;
+      return out;
+    } finally {
+      HTMLDialogElement.prototype.close = real_close;
+    }
+  });
+
+  assert.equal(result.first, "unreachable", "the first dialog showed before it was dismissed");
+  assert.equal(result.after_dismiss, "restarted", "the dialog queued behind a dismissed one shows");
+  assert.equal(result.left_open, 0, "no dialog is left open");
+  assert.equal(result.queue, 0, "the queue is empty");
+
+  assertNoProblems(page);
+});

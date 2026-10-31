@@ -259,8 +259,12 @@ export const dismiss = (key) => {
     const item = queue.find((x) => x.key === key)
     if (item == null) return
     note_queue(`dismiss ${item.id} ${key}: ${item.handle?.close != null ? `closing, open: ${item.handle.is_open?.()}` : "not shown yet"}`)
-    if (item.handle?.close != null) item.handle.close()
-    else item.on_close()
+    // The item leaves the queue now, not on the dialog's `close` event: on a
+    // macOS runner that event never came, and the closed dialog left at the
+    // head of the queue hid every one after it (#491). `on_close` runs once,
+    // so a late event does nothing.
+    item.handle?.close?.()
+    item.on_close()
 }
 
 /**

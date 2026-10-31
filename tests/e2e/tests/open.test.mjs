@@ -57,5 +57,12 @@ test("open: an editor file that fails to load fails openNotebook, naming the fil
   await page.route("**/common/SliderServerClient.js", (route) => route.abort("failed"));
   await assert.rejects(openNotebook(page, server.origin, server.secret, notebook),
     /common\/SliderServerClient\.js failed to load: net::ERR_FAILED/);
+  // The page then reloads once on its own and fails again (#578). Wait for
+  // that end state before closing: Playwright drops a route that arrives
+  // after page.close(), which leaves the reload's request paused, and on
+  // Windows the close then never returned (#623).
+  const bar = page.locator("#ember-load-failed");
+  await bar.waitFor();
+  assert.match(await bar.innerText(), /couldn't load the editor's code/);
   await page.close();
 });
