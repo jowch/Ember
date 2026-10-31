@@ -92,10 +92,11 @@ test_that("the installed frontend has no EMBER checks or calling-home strings (5
   forbidden <- c("EMBER", "plutojl.org", "fonsp.com", "stats.plutojl", "openai.com", "firebasejs")
   hits <- character()
   for (f in files) {
-    text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
-    if (is.na(text)) next
+    # Raw bytes, not readChar(): a font or image holds NULs, where readChar()
+    # stops with a warning, so the rest of the file went unread.
+    bytes <- readBin(f, "raw", file.info(f)$size)
     for (pat in forbidden) {
-      if (grepl(pat, text, fixed = TRUE)) hits <- c(hits, paste(f, pat, sep = ": "))
+      if (length(grepRaw(pat, bytes, fixed = TRUE)) > 0) hits <- c(hits, paste(f, pat, sep = ": "))
     }
   }
   expect_equal(hits, character(0))
