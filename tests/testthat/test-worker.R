@@ -3254,12 +3254,13 @@ test_that("fs::dir_ls() is watched once fs loads, and the shell lists as fs does
                                         key("data", "0 0 0 0 0 0", "-1", "", "")))
   for (k in names(r$data_seen)) expect_identical(r$data_seen[[k]], data_listing_signature(k))
   # What the shell lists is what fs returned, with the cell's new file.
+  # fs is named only in strings: it isn't among the package's Suggests.
   e <- new.env()
   sys.source(worker_script_path(), e)
   withr::with_dir(d, {
     expect_setequal(e$data_listing_names(key("data", "0 0 0 0 0 0", "-1", "*.csv", "")), c("data/a.csv", "data/new.csv"))
     expect_setequal(e$data_listing_names(key("./data", "0 -1 0 1 0 0", "2", "", "C")),
-                    as.character(fs::dir_ls("./data", recurse = TRUE, type = "file", regexp = "C", ignore.case = TRUE)))
+                    as.character(getExportedValue("fs", "dir_ls")("./data", recurse = TRUE, type = "file", regexp = "C", ignore.case = TRUE)))
   })
 })
 

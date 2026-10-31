@@ -1462,6 +1462,10 @@ test_that("a glob's watch covers the folders its pattern looks in (#595)", {
   expect_identical(data_listing_dirs(paste("Sys.glob", "0", file.path(d, "a", "f.csv"), sep = "\n")), file.path(d, "a"))
   # A wildcard in the first folder part looks in the root.
   expect_identical(data_listing_dirs(paste("Sys.glob", "0", "/tm*", sep = "\n")), "/")
+  if (.Platform$OS.type != "windows" && dir.exists("/tmp") && dir.exists("/usr")) {
+    expect_true("/tmp" %in% data_listing_dirs(paste("Sys.glob", "0", "/t*/x", sep = "\n")))
+    expect_false("/usr" %in% data_listing_dirs(paste("Sys.glob", "0", "/t*/x", sep = "\n")))
+  }
   # A file in a folder the pattern reaches is a change; one elsewhere isn't.
   writeLines("1", file.path(d, "c", "f.csv"))
   expect_identical(data_listing_signature(key), w$sig)
