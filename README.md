@@ -7,7 +7,7 @@ Ember reads each cell's code to work out which variables it defines and
 which it uses, and keeps the notebook as a dependency graph. Cells run in
 the order the graph needs, not the order they appear on the page.
 
-> **Status:** early development, not yet on CRAN. Expect rough edges; see
+> **Status:** early development. Expect rough edges; see
 > [what's missing](#whats-missing).
 
 ## Why Ember
@@ -34,12 +34,18 @@ the order the graph needs, not the order they appear on the page.
 ## Installation
 
 ```r
-# install.packages("pak")
-pak::pak("jowch/Ember")
+install.packages("ember")
 ```
 
-Ember includes a little C code, so installing from source needs a compiler
-(Rtools on Windows, the Xcode command line tools on macOS).
+The development version is built from GitHub's main branch on r-universe:
+
+```r
+install.packages("ember", repos = c("https://jowch.r-universe.dev", "https://cloud.r-project.org"))
+```
+
+Both give binaries for Windows and macOS. Ember includes a little C code, so
+installing from source needs a compiler (Rtools on Windows, the Xcode command
+line tools on macOS).
 
 ## Getting started
 
@@ -129,7 +135,7 @@ labelled P1 to P3 by priority, and the design is in [docs/design.md](https://git
 
 ## Acknowledgements
 
-Ember's browser interface is forked from [Pluto.jl](https://github.com/fonsp/Pluto.jl)
+Ember's browser interface is forked from [Pluto.jl](https://github.com/JuliaPluto/Pluto.jl)
 (MIT), by Fons van der Plas and the Pluto.jl authors. The logo's lettering
 is drawn from [Instrument Sans](https://github.com/Instrument/instrument-sans)
 (SIL Open Font License). See [inst/COPYRIGHTS](inst/COPYRIGHTS).

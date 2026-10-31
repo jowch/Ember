@@ -1,7 +1,7 @@
 # Pluto frontend (vendored)
 
 This directory is Pluto.jl's frontend (the `frontend/` folder of
-https://github.com/fonsp/Pluto.jl), vendored at v1.0.3, commit
+https://github.com/JuliaPluto/Pluto.jl), vendored at v1.0.3, commit
 `3a7651f2322d69f11ab98a020e97466b19d53723`. Pluto is MIT-licensed; the
 license is in `LICENSE` alongside this file.
 
