@@ -1244,20 +1244,98 @@ data_listing_key <- function(full, pattern, all.files, recursive, ignore.case, i
         pattern, sep = "\n")
 }
 
+#' Hook for `Sys.glob()` (#595). Its folders are the pattern's: the one
+#' before its first wildcard, and each a wildcard in a folder part matches
+#' (`data/*/x.csv`). The key is "Sys.glob", `dirmark` and the pattern
+#' made absolute, its wildcard-free folder resolved as the other keys'.
+ember_data_glob <- function(paths, dirmark = FALSE) {
+  run <- data_run
+  if (is.null(run) || is.null(running) || length(load_stack) > 0 || !is.character(paths)) return(invisible())
+  wd <- getwd()
+  for (p in unique(paths[!is.na(paths) & nzchar(paths)])) {
+    full <- if (data_absolute(p)) path.expand(p) else file.path(wd, p)
+    # Windows takes "\\" between folders, as in "data\\*.csv".
+    if (.Platform$OS.type == "windows") full <- gsub("\\", "/", full, fixed = TRUE)
+    at <- regexpr("[*?[]", full)
+    base <- if (at < 0) dirname(full) else sub("/[^/]*$", "", substr(full, 1, at - 1))
+    rest <- substring(full, nchar(base) + 2)
+    base <- data_canon(if (nzchar(base)) base else "/")
+    if (any(startsWith(paste0(sub("/+$", "", base), "/"), run$skip))) next
+    run$listed[[paste("Sys.glob", if (isTRUE(as.logical(dirmark))) "1" else "0", paste0(sub("/+$", "", base), "/", rest), sep = "\n")]] <- TRUE
+  }
+  invisible()
+}
+
+#' Hook for `list.dirs()` (#595): the key is "list.dirs", the folder, and
+#' `full.names` and `recursive`.
+ember_data_dirs <- function(path = ".", full.names = TRUE, recursive = TRUE) {
+  run <- data_run
+  if (is.null(run) || is.null(running) || length(load_stack) > 0 || !is.character(path)) return(invisible())
+  wd <- getwd()
+  flag <- function(x) if (isTRUE(as.logical(x))) "1" else "0"
+  for (p in unique(path[!is.na(path) & nzchar(path)])) {
+    full <- data_canon(if (data_absolute(p)) p else file.path(wd, p))
+    if (any(startsWith(paste0(sub("/+$", "", full), "/"), run$skip))) next
+    run$listed[[paste("list.dirs", full, paste(flag(full.names), flag(recursive)), sep = "\n")]] <- TRUE
+  }
+  invisible()
+}
+
+#' Hook for `fs::dir_ls()` (#595), called first in it with its arguments
+#' and the `...` it passes to `grep()`. Its key holds what
+#' `data_listing_names()` needs to list as fs does without fs: the folder,
+#' the path as the cell wrote it (the names start with it, and the glob
+#' or regexp matches them), `all`, the depth (-1 for any), `invert`,
+#' `ignore.case`, `perl` and `fixed`, fs's type mask, the glob and the
+#' regexp. A call fs refuses is no listing.
+ember_data_dir_ls <- function(path, all, recurse, type, glob, regexp, invert, ignore.case = FALSE, perl = FALSE,
+                              fixed = FALSE, ...) {
+  run <- data_run
+  if (is.null(run) || is.null(running) || length(load_stack) > 0) return(invisible())
+  tryCatch({
+    if (!is.character(path) || (!is.null(glob) && !is.null(regexp))) return(invisible())
+    depth <- if (is.logical(recurse)) (if (isTRUE(recurse)) -1L else 0L) else as.integer(recurse)
+    kinds <- c(any = -1, unknown = 1, file = 2, directory = 4, symlink = 8, FIFO = 16, socket = 32,
+               character_device = 64, block_device = 128)
+    mask <- sum(kinds[match.arg(type, names(kinds), several.ok = TRUE)])
+    flag <- function(x) if (isTRUE(as.logical(x))) "1" else "0"
+    text <- function(x) if (is.null(x)) "" else as.character(x)[[1]]
+    if (length(depth) != 1 || is.na(depth)) return(invisible())
+    wd <- getwd()
+    for (p in unique(path[!is.na(path) & nzchar(path)])) {
+      shown <- fs::path_expand(p)
+      full <- data_canon(if (data_absolute(shown)) shown else file.path(wd, shown))
+      if (any(startsWith(paste0(sub("/+$", "", full), "/"), run$skip))) next
+      key <- paste("dir_ls", full, shown,
+                   paste(flag(all), depth, flag(invert), flag(ignore.case), flag(perl), flag(fixed)),
+                   mask, text(glob), text(regexp), sep = "\n")
+      run$listed[[key]] <- TRUE
+    }
+  }, error = function(e) NULL)
+  invisible()
+}
+
+#' Hook `fs::dir_ls()` once fs's namespace is loaded, as the readers are.
+hook_dir_ls <- function() {
+  ns <- tryCatch(asNamespace("fs"), error = function(e) NULL)
+  fun <- if (!is.null(ns)) get0("dir_ls", envir = ns, inherits = FALSE)
+  args <- c("path", "all", "recurse", "type", "glob", "regexp", "invert", "...")
+  if (!is.function(fun) || !all(args %in% names(formals(fun)))) return(invisible())
+  # `recursive` is fs's old name for `recurse`, still taken when given.
+  recurse <- if ("recursive" %in% names(formals(fun))) quote(if (missing(recursive)) recurse else recursive) else quote(recurse)
+  hook <- bquote((.(ember_data_dir_ls))(path, all, .(recurse), type, glob, regexp, invert, ...))
+  tryCatch(replace_binding(ns, "dir_ls", hook_function(fun, hook), "fs"), error = function(e) NULL)
+  invisible()
+}
+
 #' What a listing's key lists now, as text a watcher compares: the number
 #' of names and their MD5, sorted in C order, or "missing" for a folder
-#' that isn't there. R/shell.R's copy must write the same text.
+#' that isn't there. R/shell.R's copy must be the same, as must
+#' `data_listing_names()`'s (a test checks).
 data_listing_signature <- function(key) {
-  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
-  path <- f[[2]]
-  flags <- strsplit(f[[3]], " ", fixed = TRUE)[[1]] == "1"
-  pattern <- paste(f[-(1:3)], collapse = "\n")
-  if (!dir.exists(path)) return("missing")
-  args <- list(path, pattern = if (nzchar(pattern)) pattern, all.files = flags[[1]], recursive = flags[[2]],
-               ignore.case = flags[[3]], include.dirs = flags[[4]], no.. = flags[[5]])
-  if ("fixed" %in% names(formals(list.files))) args$fixed <- flags[[6]]
-  names <- tryCatch(sort(enc2utf8(do.call(list.files, args)), method = "radix"), error = function(e) NULL)
+  names <- data_listing_names(key)
   if (is.null(names)) return("missing")
+  names <- sort(enc2utf8(names), method = "radix")
   bytes <- charToRaw(paste(names, collapse = "\n"))
   md5 <- if (getRversion() >= "4.5.0") tools::md5sum(bytes = bytes) else {
     tmp <- tempfile()
@@ -1266,6 +1344,76 @@ data_listing_signature <- function(key) {
     tools::md5sum(tmp)
   }
   paste(length(names), unname(md5))
+}
+
+#' The names a listing's key lists now, or `NULL` when its folder isn't
+#' there, by the listing's kind, its key's first line (#514, #595):
+#' `list.files()` (and `dir()`), `Sys.glob()`, `list.dirs()` and
+#' `fs::dir_ls()`. `dir_ls()` is listed with `list.files()` and filtered
+#' as fs filters it, so the engine needs no fs; its glob and regexp match
+#' the paths it returns, which start with the path as the cell wrote it.
+data_listing_names <- function(key) {
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  flags <- function(i) strsplit(f[[i]], " ", fixed = TRUE)[[1]] == "1"
+  switch(f[[1]],
+    list.files = {
+      if (!dir.exists(f[[2]])) return(NULL)
+      x <- flags(3)
+      pattern <- paste(f[-(1:3)], collapse = "\n")
+      args <- list(f[[2]], pattern = if (nzchar(pattern)) pattern, all.files = x[[1]], recursive = x[[2]],
+                   ignore.case = x[[3]], include.dirs = x[[4]], no.. = x[[5]])
+      if ("fixed" %in% names(formals(list.files))) args$fixed <- x[[6]]
+      tryCatch(do.call(list.files, args), error = function(e) NULL)
+    },
+    Sys.glob = tryCatch(Sys.glob(paste(f[-(1:2)], collapse = "\n"), dirmark = f[[2]] == "1"), error = function(e) NULL),
+    list.dirs = {
+      if (!dir.exists(f[[2]])) return(NULL)
+      x <- flags(3)
+      tryCatch(list.dirs(f[[2]], full.names = x[[1]], recursive = x[[2]]), error = function(e) NULL)
+    },
+    dir_ls = {
+      # The folder, the path as written, then: all, recurse (-1 for any
+      # depth), invert, ignore.case, perl, fixed; the type mask; the glob; the
+      # regexp (last, as it may hold a newline).
+      if (!dir.exists(f[[2]])) return(NULL)
+      shown <- f[[3]]
+      x <- strsplit(f[[4]], " ", fixed = TRUE)[[1]]
+      all <- x[[1]] == "1"
+      depth <- as.integer(x[[2]])
+      lgl <- x[3:6] == "1"
+      types <- as.integer(f[[5]])
+      glob <- f[[6]]
+      regexp <- paste(f[-(1:6)], collapse = "\n")
+      # fs walks the tree itself: hidden names only with `all`, and it
+      # doesn't descend into a symlinked folder, where list.files() does.
+      walk <- function(rel, depth) {
+        names <- list.files(if (nzchar(rel)) file.path(f[[2]], rel) else f[[2]], all.files = all, no.. = TRUE)
+        if (nzchar(rel)) names <- file.path(rel, names)
+        if (depth == 0) return(names)
+        full <- file.path(f[[2]], names)
+        down <- names[dir.exists(full) & !nzchar(Sys.readlink(full))]
+        c(names, unlist(lapply(down, walk, depth = depth - 1)))
+      }
+      rel <- tryCatch(walk("", depth), error = function(e) NULL)
+      if (is.null(rel)) return(NULL)
+      # `types` is fs's own mask: 2 files, 4 folders, 8 links, -1 any. A
+      # type this doesn't tell apart (a FIFO, a socket, "unknown") keeps
+      # every name, so the listing never misses a change fs would see.
+      if (types != -1 && bitwAnd(types, bitwNot(14L)) == 0) {
+        full <- file.path(f[[2]], rel)
+        dir <- dir.exists(full)
+        link <- nzchar(Sys.readlink(full))
+        keep <- (bitwAnd(types, 2L) > 0 & !dir & !link) | (bitwAnd(types, 4L) > 0 & dir & !link) | (bitwAnd(types, 8L) > 0 & link)
+        rel <- rel[keep]
+      }
+      shown <- sub("(.)/+$", "\\1", shown)
+      paths <- if (shown == ".") rel else if (shown == "/") paste0("/", rel) else paste0(shown, "/", rel)
+      if (nzchar(glob)) regexp <- utils::glob2rx(glob)
+      if (nzchar(regexp)) paths <- suppressWarnings(grep(regexp, paths, ignore.case = lgl[[2]], perl = lgl[[3]], fixed = lgl[[4]],
+                                                         value = TRUE, invert = lgl[[1]]))
+      paths
+    },
+    NULL)
 }
 
 #' Hook for `isOpen()`, which read.table() calls on a connection it is
@@ -1389,6 +1537,9 @@ install_data_traces <- function() {
   list_args <- intersect(names(formals(ember_data_list)), names(formals(list.files)))
   list_hook <- as.call(c(list(ember_data_list), sapply(list_args, as.name, simplify = FALSE)))
   for (name in c("list.files", "dir")) replace_binding(baseenv(), name, hook_function(get(name, envir = baseenv()), list_hook))
+  replace_binding(baseenv(), "Sys.glob", hook_function(Sys.glob, bquote((.(ember_data_glob))(paths, dirmark))))
+  replace_binding(baseenv(), "list.dirs", hook_function(list.dirs, bquote((.(ember_data_dirs))(path, full.names, recursive))))
+  if (isNamespaceLoaded("fs")) hook_dir_ls() else setHook(packageEvent("fs", "onLoad"), function(...) hook_dir_ls())
   for (pkg in names(data_reader_args)) {
     if (identical(pkg, "base") || isNamespaceLoaded(pkg)) hook_data_readers(pkg)
     else setHook(packageEvent(pkg, "onLoad"), local({ p <- pkg; function(...) hook_data_readers(p) }))
