@@ -15,6 +15,9 @@
 #   worker/R-<x.y.z>-<md5 of worker.R>.Rc    the worker's compiled image
 #                                            (shell.R, ready_worker_image())
 #
+# renv downloads into each installer's own `tempdir()`, not into
+# renv-root (#616).
+#
 # Ember's own renv cache, not the user's: `ember::clean()` deletes cache
 # entries no Ember library uses, which must never touch the user's own renv
 # projects.
@@ -24,7 +27,11 @@
 # renamed into place; a rename that finds the target already there means
 # another process finished the same work, so the loser deletes its copy.
 # Both outcomes are the same library (per make-operations-idempotent).
-# renv's own cache writes use renv's locking.
+# renv's own cache writes use renv's locking. Its downloads don't, and
+# with one download folder another install could open an archive that was
+# still being written (#616). So each installer downloads into its own
+# `tempdir()` (inst/installer.R), and two installs of one package each
+# download it.
 
 #' `path` with its nearest existing ancestor resolved by `normalizePath()`
 #' and the rest (components that don't exist yet) reattached as given.

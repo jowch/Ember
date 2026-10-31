@@ -363,6 +363,32 @@ test_that("a package that never downloads is said not to have downloaded, not no
   expect_false(any(grepl("EMBER-MISSING binary", notebook_state(nb)$packages$target$log, fixed = TRUE)))
 })
 
+# ---- #616: each install downloads into its own folder ------------------------
+
+test_that("an install downloads into its own folder, not one another install may be writing to (#616)", {
+  # Every install used to download into renv-root, so one could read an
+  # archive another was still writing. Over HTTP, so renv downloads (a
+  # file:// archive is read in place); the server cuts each first
+  # download, so #450's retry must look in the install's own folder too.
+  server <- start_toy_server()
+  on.exit(server$process$kill(), add = TRUE)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  nb <- open_notebook(write_toy_notebook("2026-09-01"),
+                      repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", server$port)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
+  got <- server$finish()
+  expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% got), info = paste(got, collapse = "\n"))
+  # Nothing was downloaded into the shared folder.
+  shared <- list.files(file.path(cache, "renv-root"), pattern = "\\.(tar\\.gz|zip|tgz)$", recursive = TRUE)
+  expect_identical(shared, character())
+})
+
 # ---- #39: today's index is fetched again --------------------------------------
 
 test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
