@@ -572,8 +572,10 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
         if (container == null) return
 
         // Invalidate current scripts and create a new invalidation token immediately
+        let invalidated = false
         let invalidation = new Promise((resolve) => {
             invalidate_scripts.current = () => {
+                invalidated = true
                 resolve(null)
             }
         })
@@ -643,6 +645,8 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
                 js_init_set?.add(container)
                 // Where the page can't reach Ember's server, the host may give the widget files.
                 await use_host_deps(container)
+                // The host's read can take seconds: an output that changed meanwhile is another's now.
+                if (invalidated) return
                 previous_results_map.current = await execute_scripttags({
                     root_node: container,
                     script_nodes: new_scripts,

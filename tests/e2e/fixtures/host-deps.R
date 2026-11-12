@@ -14,7 +14,9 @@ writeLines(
   "window.__host_dep_runs = (window.__host_dep_runs || 0) + 1; window.hostWidget = (id) => { document.getElementById(id).textContent = 'widget-ran' }",
   file.path(dep_dir, "widget.js")
 )
-writeLines(".host-marker { color: rgb(1, 2, 3); }", file.path(dep_dir, "widget.css"))
+writeLines(".host-marker { color: rgb(1, 2, 3); background-image: url(img/dot.svg); }", file.path(dep_dir, "widget.css"))
+dir.create(file.path(dep_dir, "img"), showWarnings = FALSE)
+writeLines('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', file.path(dep_dir, "img", "dot.svg"))
 dep <- htmltools::htmlDependency("emberhostdep", "1.0.0", src = c(file = dep_dir), script = "widget.js", stylesheet = "widget.css")
 
 # %% id=WIDGET

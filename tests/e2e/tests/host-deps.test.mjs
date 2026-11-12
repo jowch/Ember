@@ -25,8 +25,11 @@ test("a widget's files come from the host's ember_dep_file, once each", {
   await page.route(/\/deps\//, (route) => { blocked.push(route.request().url()); return route.abort(); });
   // The host reads them its own way (the view's tool) and hands them over.
   const asked = [];
+  // The first read of the stylesheet fails: the next output that needs it tries again.
+  let failOnce = true;
   await page.exposeFunction("__host_read_dep", async (p) => {
     asked.push(p);
+    if (failOnce && p.endsWith(".css")) { failOnce = false; throw new Error("not now"); }
     const res = await fetch(`${server.origin}${p}?secret=${server.secret}`);
     assert.equal(res.status, 200, p);
     return { mime: res.headers.get("content-type") || "", data: Buffer.from(await res.arrayBuffer()).toString("base64") };
@@ -40,11 +43,17 @@ test("a widget's files come from the host's ember_dep_file, once each", {
 
   assert.equal(await page.evaluate(() => window.__host_dep_runs), 1, "the library loads once, and both outputs use it");
   assert.equal(await page.locator("#marker-2").evaluate((el) => getComputedStyle(el).color), "rgb(1, 2, 3)", "the stylesheet applies, as a <style>");
-  assert.equal(await page.locator(`${cellSelector("WIDGET")} link[rel~='stylesheet']`).count(), 0, "no stylesheet link is left to load");
-  assert.deepEqual([...new Set(asked)].sort(), asked.slice().sort(), "each file is read from the host once");
-  assert.equal(asked.length, 2, `the script and the stylesheet: ${JSON.stringify(asked)}`);
+  assert.match(await page.locator("#marker-2").evaluate((el) => getComputedStyle(el).backgroundImage), /^url\("data:image\/svg\+xml;base64,/, "the image next to the stylesheet comes as a data: URL");
+  assert.equal(await page.locator(`${cellSelector("WIDGET2")} link[rel~='stylesheet']`).count(), 0, "no stylesheet link is left to load");
+  assert.deepEqual(asked.slice().sort(), [
+    "deps/emberhostdep-1.0.0/img/dot.svg",
+    "deps/emberhostdep-1.0.0/widget.css",
+    "deps/emberhostdep-1.0.0/widget.css",
+    "deps/emberhostdep-1.0.0/widget.js",
+  ], "each file is read once, and the stylesheet again after its read failed");
   assert.equal(blocked.length, 0, `nothing went to /deps/: ${JSON.stringify(blocked)}`);
 
+  // The failed read is logged as a warning, which is all it should do.
   assertNoProblems(page);
   await page.close();
 });
