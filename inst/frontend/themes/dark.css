@@ -224,3 +224,13 @@
         --cm-color-line-numbers: #b3b3b3;
     }
 }
+
+/* An htmlwidget brings its own light styles: DT's dark-grey text, its search
+   box and paging, are unreadable on the dark page. Each widget is drawn on a
+   light card, as plotly already draws its own white background. */
+:root[data-theme="dark"] pluto-output .html-widget {
+    color-scheme: light;
+    background: #fff;
+    color: #333;
+    border-radius: 4px;
+}

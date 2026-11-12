@@ -597,7 +597,7 @@ inside_html_attribute <- function(rendered, pos) {
 #' (e.g. `list(src = "a.js", type = "module")`, for a script that needs an
 #' attribute beyond `src`); a plain file name is the common case of this
 #' with no extra attributes.
-dep_script_tag <- function(base, script_entry) {
+dep_script_tag <- function(base, script_entry, name = NULL, version = NULL) {
   if (is.list(script_entry)) {
     src <- script_entry$src
     extra <- script_entry[setdiff(names(script_entry), "src")]
@@ -606,6 +606,12 @@ dep_script_tag <- function(base, script_entry) {
   } else {
     src <- script_entry
     attrs <- ""
+  }
+  # The dependency's name and version, so the page loads one version of a
+  # library however many outputs carry it (CellOutput.js's execute_scripttags).
+  if (!is.null(name)) {
+    attrs <- paste0(attrs, sprintf(' data-ember-dep="%s" data-ember-dep-version="%s"',
+                                   html_escape(name), html_escape(version %||% "")))
   }
   sprintf('<script src="%s%s"%s></script>', base, src, attrs)
 }
@@ -624,7 +630,9 @@ dep_script_tag <- function(base, script_entry) {
 #' DOMContentLoaded by itself). Pluto's script runner already copies each
 #' `<script src>` into the page head once and runs it before inline scripts
 #' (CellOutput.js), so loading a library once across many outputs needs no
-#' further page change.
+#' further page change. Each script tag carries its dependency's name and
+#' version (`data-ember-dep`, `data-ember-dep-version`), so the page loads one
+#' version of a library, the first, when outputs carry different ones.
 project_dep_tags <- function(deps) {
   if (length(deps) == 0) return("")
   tags <- character()
@@ -637,7 +645,7 @@ project_dep_tags <- function(deps) {
       tags <- c(tags, sprintf('<link rel="stylesheet" href="%s%s">', base, f))
     }
     for (sc in d$script %||% list()) {
-      tags <- c(tags, dep_script_tag(base, sc))
+      tags <- c(tags, dep_script_tag(base, sc, d$name, d$version))
     }
     if (!is.null(d$head)) tags <- c(tags, d$head)
   }

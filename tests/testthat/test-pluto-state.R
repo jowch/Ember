@@ -835,10 +835,12 @@ test_that("project_output() prepends dependency tags in order; staticRender only
   o <- project_output(fake_view(output = new_display("text/html", "<div>hi</div>", "hi", deps = deps)))
   expect_equal(o$mime, "text/html")
   link_pos <- regexpr('<link rel="stylesheet" href="deps/jquery-3.6.0/jquery.css">', o$body)
-  script_pos <- regexpr('<script src="deps/jquery-3.6.0/jquery.js"></script>', o$body)
-  widgets_pos <- regexpr('<script src="deps/htmlwidgets-1.5/htmlwidgets.js"></script>', o$body)
+  script_pos <- regexpr('<script src="deps/jquery-3.6.0/jquery.js" data-ember-dep="jquery" data-ember-dep-version="3.6.0"></script>', o$body, fixed = TRUE)
+  widgets_pos <- regexpr('<script src="deps/htmlwidgets-1.5/htmlwidgets.js" data-ember-dep="htmlwidgets" data-ember-dep-version="1.5"></script>', o$body, fixed = TRUE)
   static_render_pos <- regexpr("HTMLWidgets.staticRender", o$body, fixed = TRUE)
   div_pos <- regexpr("<div>hi</div>", o$body, fixed = TRUE)
+  expect_gt(script_pos, 0)
+  expect_gt(widgets_pos, 0)
   expect_true(link_pos < script_pos)
   expect_true(script_pos < widgets_pos)
   expect_true(widgets_pos < div_pos)
@@ -859,26 +861,26 @@ test_that("project_dep_tags() adds a '/' between a bare href and its file (ui-2 
   tags <- project_dep_tags(list(list(name = "cdnlib", version = "1", dir = NULL,
     href = "https://example.org/lib", script = "a.js", stylesheet = "a.css", head = NULL)))
   expect_match(tags, '<link rel="stylesheet" href="https://example.org/lib/a.css">', fixed = TRUE)
-  expect_match(tags, '<script src="https://example.org/lib/a.js"></script>', fixed = TRUE)
+  expect_match(tags, '<script src="https://example.org/lib/a.js" data-ember-dep="cdnlib" data-ember-dep-version="1"></script>', fixed = TRUE)
 
   # an href that already ends in "/" isn't doubled
   tags2 <- project_dep_tags(list(list(name = "cdnlib", version = "1", dir = NULL,
     href = "https://example.org/lib/", script = "a.js", stylesheet = character(), head = NULL)))
-  expect_match(tags2, '<script src="https://example.org/lib/a.js"></script>', fixed = TRUE)
+  expect_match(tags2, '<script src="https://example.org/lib/a.js" data-ember-dep="cdnlib" data-ember-dep-version="1"></script>', fixed = TRUE)
   expect_false(grepl("lib//a.js", tags2, fixed = TRUE))
 })
 
 test_that("project_dep_tags() accepts htmltools' list form for a script entry (ui-2 review)", {
   tags <- project_dep_tags(list(list(name = "mod", version = "1", dir = "/lib", href = NULL,
     script = list(list(src = "a.js", type = "module")), stylesheet = character(), head = NULL)))
-  expect_match(tags, '<script src="deps/mod-1/a.js" type="module"></script>', fixed = TRUE)
+  expect_match(tags, '<script src="deps/mod-1/a.js" type="module" data-ember-dep="mod" data-ember-dep-version="1"></script>', fixed = TRUE)
 
   # a mix of plain names and list entries
   tags2 <- project_dep_tags(list(list(name = "mod", version = "1", dir = "/lib", href = NULL,
     script = list("plain.js", list(src = "a.js", type = "module")),
     stylesheet = character(), head = NULL)))
-  expect_match(tags2, '<script src="deps/mod-1/plain.js"></script>', fixed = TRUE)
-  expect_match(tags2, '<script src="deps/mod-1/a.js" type="module"></script>', fixed = TRUE)
+  expect_match(tags2, '<script src="deps/mod-1/plain.js" data-ember-dep="mod" data-ember-dep-version="1"></script>', fixed = TRUE)
+  expect_match(tags2, '<script src="deps/mod-1/a.js" type="module" data-ember-dep="mod" data-ember-dep-version="1"></script>', fixed = TRUE)
 })
 
 # ---- Disable cell (ui-3 33) --------------------------------------------------
