@@ -423,7 +423,10 @@ version so its source can be found.
 
   A small classic `<script>` in the export (`inst/frontend/export-loader.js`,
   inlined) reads `#ember-modules`, makes a Blob URL per module
-  (`text/javascript`, or `application/json` for `.json`), inserts
+  (`text/javascript`; a `.json` file is embedded as
+  `export default <json>;` and its import loses `with { type: "json" }`,
+  since a browser fetches a JSON module under `connect-src`, which a
+  sandboxed host may set to `'none'`), inserts
   `<script type="importmap">` mapping each `ember/<path>` to its Blob URL,
   then inserts `<script type="module">import "ember/editor.js"</script>`.
   Import maps resolve any order of imports, including cycles, and module
@@ -434,6 +437,15 @@ version so its source can be found.
   run time or uses `import.meta` (checked: the one computed `import()`,
   `common/Environment.js`, loads an injected data URL that Ember never
   sets). A test (ui-2-tests.md 15) fails if either appears.
+
+  `view_page(notebook_id_js)` is the same page without a notebook in it,
+  for a host that shows the live editor where the page can load nothing
+  from Ember (Endeavor's notebook view in Claude's desktop app, a sandboxed
+  frame drawn from `srcdoc`). It has no state file, the UI is on, and the
+  notebook id is `notebook_id_js`, an expression the host defines. The host
+  relays the WebSocket itself and sets `window.pluto_pluto_server_url`,
+  which `PlutoConnection.js` reads before the page's own location. Widget
+  files (`deps/...`) aren't in it.
 
   An export of the development package is self-contained too, so
   `export_root()`, the jsdelivr root and the banner note are dropped.

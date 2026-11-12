@@ -112,12 +112,22 @@ rewrite_module_specifiers <- function(text, rel) {
   })
 }
 
+#' `text` (one frontend `.js` file, specifiers already rewritten) with
+#' `with { type: "json" }` dropped from every import of a `.json` module,
+#' which `embed_modules()` turns into a JavaScript module.
+drop_json_import_attributes <- function(text) {
+  gsub('("ember/[^"]*\\.json")\\s*with\\s*\\{\\s*type\\s*:\\s*["\']json["\']\\s*\\}', "\\1", text, perl = TRUE)
+}
+
 #' Every `.js` and `.json` file under `frontend_dir`, as a named list
-#' (frontend-relative path -> file text). `.js` files have their relative
-#' import specifiers rewritten first (above); `.json` files are embedded
-#' verbatim (lang_imports.js imports one `with { type: "json" }`, an
-#' attribute the specifier rewrite leaves untouched since it only touches
-#' the quoted string).
+#' (frontend-relative path -> module text). `.js` files have their relative
+#' import specifiers rewritten first (above). A `.json` file becomes a
+#' JavaScript module (`export default <json>;`), and an import of one drops
+#' its `with { type: "json" }`: a browser fetches a JSON module under the
+#' page's `connect-src`, and a host that sets it to `'none'` (Claude's MCP
+#' App views do) would stop the editor from loading. A JavaScript module
+#' from a Blob URL loads under `script-src` instead, which allows `blob:`
+#' there. The live page, served by Ember, still imports the `.json` files.
 embed_modules <- function(frontend_dir) {
   files <- list.files(frontend_dir, pattern = "\\.(js|json)$", recursive = TRUE, full.names = TRUE)
   modules <- vector("list", length(files))
@@ -125,7 +135,8 @@ embed_modules <- function(frontend_dir) {
   for (i in seq_along(files)) {
     rel <- gsub("\\\\", "/", substring(files[i], nchar(frontend_dir) + 2L))
     text <- read_file_utf8(files[i])
-    if (grepl("\\.js$", rel)) text <- rewrite_module_specifiers(text, rel)
+    if (grepl("\\.js$", rel)) text <- drop_json_import_attributes(rewrite_module_specifiers(text, rel))
+    else text <- paste0("export default ", text, ";")
     names_v[i] <- rel
     modules[[i]] <- text
   }
@@ -251,9 +262,6 @@ dep_files_json <- function(dep_paths) {
 #' cell's `ember$variables` is dropped before encoding: a value the
 #' notebook never printed must not land in a downloaded HTML file.
 export_html <- function(state) {
-  frontend_dir <- system.file("frontend", package = "ember")
-  template <- read_file_utf8(file.path(frontend_dir, "editor.html"))
-
   js <- pluto_state(state)$js
   js$cell_results <- lapply(js$cell_results, function(r) {
     r$ember$variables <- NULL
@@ -270,6 +278,47 @@ export_html <- function(state) {
     "window.pluto_statefile = ", js_string_literal(statefile), ";",
     "window.pluto_notebookfile = ", js_string_literal(notebookfile), ";",
     "</script>")
+
+  dep_paths <- collect_dep_file_paths(js, collect_output_deps(state))
+  deps_json <- dep_files_json(dep_paths)
+  deps_script <- if (is.null(deps_json)) "" else {
+    paste0('<script type="application/json" id="ember-deps">',
+          escape_json_for_script(deps_json), "</script>")
+  }
+
+  bundled_page(params, deps_script)
+}
+
+#' The live editor as one self-contained page, for a host that shows it
+#' where the page can load nothing from Ember's server: a sandboxed frame
+#' such as an MCP App view, which gets the page through its host and talks
+#' to Ember through a relayed WebSocket. It is `export_html()`'s page without
+#' a notebook in it: no state file, the UI enabled, and the notebook id read
+#' at run time from `notebook_id_js`, a JavaScript expression the host
+#' defines before the page's scripts run (Pluto.jl's `generate_html()` takes
+#' the same). The host also sets `window.pluto_pluto_server_url` when the
+#' page's own address isn't the server's, as in a frame drawn from
+#' `srcdoc`. Made from the installed frontend, so it always matches the
+#' server it talks to.
+#' @param notebook_id_js A JavaScript expression for the notebook's id, such
+#'   as `"window.host_notebook_id"`.
+#' @return The page's HTML, one string.
+view_page <- function(notebook_id_js) {
+  stopifnot(is.character(notebook_id_js), length(notebook_id_js) == 1L,
+            nzchar(notebook_id_js), !grepl("<", notebook_id_js, fixed = TRUE))
+  params <- paste0(
+    '<script data-pluto-file="launch-parameters">',
+    "window.pluto_notebook_id = ", notebook_id_js, ";",
+    "</script>")
+  bundled_page(params, "")
+}
+
+#' editor.html with `params` (the launch-parameters script) in place and the
+#' whole frontend inlined; `extra_scripts` goes before the loader (the
+#' export's `#ember-deps`). Shared by `export_html()` and `view_page()`.
+bundled_page <- function(params, extra_scripts) {
+  frontend_dir <- system.file("frontend", package = "ember")
+  template <- read_file_utf8(file.path(frontend_dir, "editor.html"))
   html <- sub_literal('<meta name="pluto-insertion-spot-parameters"[^>]*/?>', params, template)
 
   html <- regex_replace_fn(html, 'href="(\\./img/[^"]+)"', function(m) {
@@ -294,18 +343,11 @@ export_html <- function(state) {
     jsonlite::toJSON(modules, auto_unbox = TRUE, null = "null")))
   modules_script <- paste0('<script type="application/json" id="ember-modules">', modules_json, "</script>")
 
-  dep_paths <- collect_dep_file_paths(js, collect_output_deps(state))
-  deps_json <- dep_files_json(dep_paths)
-  deps_script <- if (is.null(deps_json)) "" else {
-    paste0('<script type="application/json" id="ember-deps">',
-          escape_json_for_script(deps_json), "</script>")
-  }
-
   loader_text <- escape_closing_script(read_file_utf8(file.path(frontend_dir, "export-loader.js")))
   loader_script <- paste0("<script>", loader_text, "</script>")
 
   html <- sub_literal('<script src="\\./editor\\.js" type="module" defer></script>',
-                      paste0(modules_script, deps_script, loader_script), html)
+                      paste0(modules_script, extra_scripts, loader_script), html)
   html <- sub_literal('<script src="\\./warn_old_browsers\\.js"></script>',
                       paste0("<script>", escape_closing_script(read_file_utf8(
                         file.path(frontend_dir, "warn_old_browsers.js"))), "</script>"),

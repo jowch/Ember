@@ -33,9 +33,11 @@
 
     const modules = JSON.parse(document.getElementById("ember-modules").textContent)
     const imports = {}
+    // Every module is JavaScript, a .json file too (export_html() wraps it
+    // as `export default ...`): a JSON module is fetched under the page's
+    // connect-src, which a sandboxed host may set to 'none' (view_page()).
     for (const path in modules) {
-        const type = path.endsWith(".json") ? "application/json" : "text/javascript"
-        imports["ember/" + path] = URL.createObjectURL(new Blob([modules[path]], { type }))
+        imports["ember/" + path] = URL.createObjectURL(new Blob([modules[path]], { type: "text/javascript" }))
     }
 
     const importMap = document.createElement("script")
