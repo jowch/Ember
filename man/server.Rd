@@ -106,7 +106,9 @@ from the server, such as a sandboxed frame. The host carries the page's
 WebSocket to the server itself, and sets \code{window.pluto_pluto_server_url}
 to the server's address when the page's own location isn't it. The page
 has no notebook in it: it connects and shows the one \code{notebook_id_js}
-names.
+names. A widget's files come from the host when it sets
+\code{window.ember_dep_file(path)}, a function that resolves to the file as
+\code{{ mime, data }} with the data in base64.
 
 \code{stop_server()} returns \code{NULL}, invisibly.
 }

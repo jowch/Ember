@@ -445,7 +445,21 @@ version so its source can be found.
   notebook id is `notebook_id_js`, an expression the host defines. The host
   relays the WebSocket itself and sets `window.pluto_pluto_server_url`,
   which `PlutoConnection.js` reads before the page's own location. Widget
-  files (`deps/...`) aren't in it.
+  files (`deps/...`) aren't in it: the host gives them when an output asks,
+  through `window.ember_dep_file(path)`, which resolves to `{ mime, data }`
+  (base64, the shape of an export's `#ember-deps` entries).
+  `common/HostDeps.js` makes each script one Blob URL for the page's life,
+  so a library several outputs use loads once, and puts each stylesheet in
+  as a `<style>`, since such a frame allows inline styles but not a
+  stylesheet from a Blob URL; the files its `url()`s name beside it come as
+  `data:` URLs, and an `@import` isn't followed. Which is which comes from
+  the element (`<script>` or `<link>`), not the host's mime. A stylesheet's
+  href is held back before the output's HTML is set, so the page never
+  tries to load it itself. The host sets the hook before the page's
+  scripts run. A read that fails or takes over 60 s is dropped, and the
+  next output that needs the file asks again. An output whose cell ran
+  again while it waited doesn't run its scripts. Without the hook nothing
+  changes (`host-deps.test.mjs`).
 
   An export of the development package is self-contained too, so
   `export_root()`, the jsdelivr root and the banner note are dropped.

@@ -298,8 +298,10 @@ export_html <- function(state) {
 #' defines before the page's scripts run (Pluto.jl's `generate_html()` takes
 #' the same). The host also sets `window.pluto_pluto_server_url` when the
 #' page's own address isn't the server's, as in a frame drawn from
-#' `srcdoc`. Made from the installed frontend, so it always matches the
-#' server it talks to.
+#' `srcdoc`. A widget's files come from the host when it sets
+#' `window.ember_dep_file(path)`, a function that resolves to the file as
+#' `{ mime, data }` with the data in base64. Made from the installed
+#' frontend, so it always matches the server it talks to.
 #' @param notebook_id_js A JavaScript expression for the notebook's id, such
 #'   as `"window.host_notebook_id"`.
 #' @return The page's HTML, one string.

@@ -32,6 +32,7 @@ import lodashLibrary from "../imports/lodash-es.js"
 import { t } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
 import { load_mathjax } from "../common/SetupMathJax.js"
+import { hold_host_deps, use_host_deps } from "../common/HostDeps.js"
 
 const prettyAssignee = (assignee) =>
     assignee && assignee.startsWith("const ") ? html`<span style="color: var(--cm-color-keyword)">const</span> ${assignee.slice(6)}` : assignee
@@ -571,8 +572,10 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
         if (container == null) return
 
         // Invalidate current scripts and create a new invalidation token immediately
+        let invalidated = false
         let invalidation = new Promise((resolve) => {
             invalidate_scripts.current = () => {
+                invalidated = true
                 resolve(null)
             }
         })
@@ -589,7 +592,7 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
             : body
 
         // Actually "load" the html
-        container.innerHTML = html_content_to_set
+        container.innerHTML = hold_host_deps(html_content_to_set)
 
         // A self-contained export embeds each widget dependency file once,
         // as a Blob URL in window.__ember_export_dep_urls (export-loader.js),
@@ -640,6 +643,10 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
         run(async () => {
             try {
                 js_init_set?.add(container)
+                // Where the page can't reach Ember's server, the host may give the widget files.
+                await use_host_deps(container)
+                // The host's read can take seconds: an output that changed meanwhile is another's now.
+                if (invalidated) return
                 previous_results_map.current = await execute_scripttags({
                     root_node: container,
                     script_nodes: new_scripts,
