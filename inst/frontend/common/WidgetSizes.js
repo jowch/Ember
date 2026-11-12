@@ -4,7 +4,8 @@
 // or a scrollbar appearing. plotly then stays at the width it drew at, wider
 // than its box. Each widget's box is watched instead, and a change in its size
 // is passed on as one "resize" event, which htmlwidgets hands to each widget
-// whose size changed.
+// whose size changed. Every other "resize" listener on the window hears it too,
+// as it would hear a real one.
 
 /** @type {WeakMap<Element, string>} */
 const sizes = new WeakMap()

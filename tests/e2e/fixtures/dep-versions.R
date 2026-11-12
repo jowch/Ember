@@ -23,9 +23,13 @@ htmltools::browsable(htmltools::tagList(htmltools::tags$div(id = "dupe-1", class
 # %% id=NEW
 htmltools::browsable(htmltools::tagList(htmltools::tags$div(id = "dupe-2", class = "dupe-marker", "pending"), htmltools::tags$script("document.getElementById('dupe-2').textContent = window.__dupe_runs.join()"), new))
 
+# %% id=BOX
+htmltools::browsable(htmltools::tags$div(id = "box-widget", class = "html-widget", style = "width: 100%; height: 40px"))
+
 # /// cell order
 # S
 # DEP
 # OLD
 # NEW
+# BOX
 # ///

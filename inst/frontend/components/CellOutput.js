@@ -402,22 +402,32 @@ const execute_scripttags = async ({ root_node, script_nodes, previous_results_ma
             // version per page, the first, as Shiny does. Two outputs can carry
             // different versions of one library: plotly's jQuery 3.5.1 and DT's
             // 3.6.0. A second jQuery would replace the first, and with it the
-            // plugins (DataTables) that a later render looks for on it.
+            // plugins (DataTables) that a later render looks for on it. The first
+            // version stays until the page reloads, even after a package upgrade
+            // brings a newer one; a version whose file failed to load doesn't count.
+            // (In a host's frame, use_host_deps() has already read a skipped
+            // version's file; it just isn't run.)
             const dep = node.dataset?.emberDep
             const dep_version = node.dataset?.emberDepVersion
-            if (script_el == undefined && dep != null) {
-                const other = head_scripts.filter((s) => s.dataset.emberDep === dep && s.dataset.emberDepVersion !== dep_version)
-                if (other.length > 0) {
-                    // Wait for that version's files that are still loading.
-                    await Promise.all(
-                        other
-                            // @ts-ignore
-                            .filter((s) => s.pluto_is_loading_me != null)
-                            .map((s) => new Promise((resolve) => {
-                                s.addEventListener("load", resolve)
-                                s.addEventListener("error", resolve)
-                            }))
-                    )
+            const other_versions = () =>
+                Array.from(document.head.querySelectorAll("script")).filter(
+                    (s) => s.dataset.emberDep === dep && s.dataset.emberDepVersion !== dep_version && s.dataset.emberDepFailed == null
+                )
+            if (script_el == undefined && dep != null && other_versions().length > 0) {
+                // Wait for that version's files that are still loading.
+                await Promise.all(
+                    other_versions()
+                        // @ts-ignore
+                        .filter((s) => s.pluto_is_loading_me != null)
+                        .map(
+                            (s) =>
+                                new Promise((resolve) => {
+                                    s.addEventListener("load", resolve)
+                                    s.addEventListener("error", resolve)
+                                })
+                        )
+                )
+                if (other_versions().length > 0) {
                     nested_script_execution_level -= 1
                     continue
                 }
@@ -447,7 +457,11 @@ const execute_scripttags = async ({ root_node, script_nodes, previous_results_ma
             if (need_to_await) {
                 await new Promise((resolve) => {
                     script_el_really.addEventListener("load", resolve)
-                    script_el_really.addEventListener("error", resolve)
+                    script_el_really.addEventListener("error", (e) => {
+                        // Another version of this dependency may load instead.
+                        if (script_el_really.dataset.emberDep != null) script_el_really.dataset.emberDepFailed = ""
+                        resolve(e)
+                    })
                     document.head.appendChild(script_el_really)
                 })
                 // @ts-ignore
