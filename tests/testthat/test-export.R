@@ -268,3 +268,71 @@ test_that("[net] a real htmltools widget's dependency survives export (20)", {
   deps <- read_deps_script(html)
   expect_equal(length(deps), 1)
 })
+
+# ---- view_page(): the live editor in one page, for a sandboxed host ------
+
+#' Whether `html`'s scripts end where a host that splits the page by plain
+#' text (EndeavorMCP's views.rs) thinks they do: from each `<script`, the
+#' next `</script` closes it, and the walk goes on after that close. TRUE
+#' when that walk uses every `</script` in the page, so none sits inside a
+#' script's text. (An opening `<script` inside a script's text, as in a
+#' comment, is harmless to both readings.)
+scripts_end_where_split <- function(html) {
+  opens <- gregexpr("(?i)<script", html, perl = TRUE)[[1]]
+  closes <- gregexpr("(?i)</script", html, perl = TRUE)[[1]]
+  used <- 0L
+  at <- 0L
+  repeat {
+    open <- opens[opens > at][1]
+    if (is.na(open)) break
+    close <- closes[closes > open][1]
+    if (is.na(close)) return(FALSE)
+    used <- used + 1L
+    at <- close
+  }
+  used == length(closes)
+}
+
+test_that("view_page() is the live editor: the id from the host's expression, no state, UI on", {
+  html <- view_page("window.host_notebook_id")
+  m <- regmatches(html, regexec(
+    '<script data-pluto-file="launch-parameters">(.*?)</script>', html, perl = TRUE))[[1]]
+  expect_equal(m[2], "window.pluto_notebook_id = window.host_notebook_id;")
+  expect_false(grepl('id="ember-deps"', html, fixed = TRUE))
+  expect_error(view_page("1</script><script>alert(1)"))
+  expect_error(view_page(""))
+})
+
+test_that("view_page() loads nothing from outside the page (15, as the export)", {
+  skeleton <- strip_script_and_style_content(view_page("window.host_notebook_id"))
+  expect_false(grepl('src="\\./', skeleton, perl = TRUE))
+  expect_false(grepl('href="\\./', skeleton, perl = TRUE))
+  expect_false(grepl("url\\(\\./", skeleton, perl = TRUE))
+})
+
+test_that("view_page() splits by plain text: one <body>, script tags alternate, no < in its JSON", {
+  html <- view_page("window.host_notebook_id")
+  expect_true(scripts_end_where_split(html))
+  expect_length(gregexpr("(?i)<body", html, perl = TRUE)[[1]], 1L)
+  m <- regmatches(html, regexec(
+    '<script type="application/json" id="ember-modules">(.*?)</script>', html, perl = TRUE))[[1]]
+  expect_false(grepl("<", m[2], fixed = TRUE))
+})
+
+test_that("the bundle's .json files are JavaScript modules, imported without a JSON type", {
+  # A JSON module is fetched under connect-src, which Claude's views set to
+  # 'none'; a JavaScript module from a Blob URL is not.
+  modules <- embed_modules(system.file("frontend", package = "ember"))
+  json_paths <- grep("\\.json$", names(modules), value = TRUE)
+  expect_true(length(json_paths) > 0)
+  for (path in json_paths) {
+    text <- modules[[path]]
+    expect_match(text, "^export default ", perl = TRUE)
+    body <- sub(";$", "", sub("^export default ", "", text))
+    expect_no_error(jsonlite::parse_json(body))
+  }
+  with_json <- Filter(function(text) grepl('with\\s*\\{\\s*type\\s*:\\s*["\']json', text, perl = TRUE),
+                      modules[grepl("\\.js$", names(modules))])
+  expect_equal(names(with_json), character(0))
+  expect_match(modules[["imports/lang_imports.js"]], 'from "ember/lang/english.json"\\s*(\\n|$)', perl = TRUE)
+})

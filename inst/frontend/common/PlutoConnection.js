@@ -346,7 +346,12 @@ export const auth_check_url_from_ws = (/** @type {string | URL} */ ws_url) => {
     return auth_url.toString()
 }
 
-const default_ws_address = () => ws_address_from_base(window.location.href)
+// A host that draws the page somewhere other than Ember's own address (a
+// frame from `srcdoc`, whose location is about:srcdoc) sets
+// window.pluto_pluto_server_url to the server's, as Pluto.jl's launch
+// parameter does (R/export.R, view_page()).
+//@ts-ignore
+const default_ws_address = () => ws_address_from_base(window.pluto_pluto_server_url || window.location.href)
 
 /**
  * @typedef PlutoConnection

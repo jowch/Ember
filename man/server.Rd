@@ -3,6 +3,7 @@
 \alias{serve}
 \alias{start_server}
 \alias{host_notebook}
+\alias{view_page}
 \alias{stop_server}
 \alias{print.ember_server}
 \alias{print.ember_server_handle}
@@ -23,6 +24,8 @@ start_server(path = NULL, port = 0L, open = interactive(), timeout = 15,
              allowed_hosts = character())
 
 host_notebook(server, nb, owned = FALSE, remember = FALSE)
+
+view_page(notebook_id_js)
 
 stop_server(server)
 
@@ -72,6 +75,9 @@ page's recent notebooks. Only Ember's own pages set it (the start page,
 \verb{/open}, the paths given to \code{serve()} or \code{start_server()}); a
 host leaves it \code{FALSE}, so notebooks it drives never show up there as
 ones the user opened.}
+\item{notebook_id_js}{For \code{view_page()}: a JavaScript expression the page
+evaluates for the notebook's id, such as \code{"window.host_notebook_id"}. The
+host defines it before the page's scripts run.}
 \item{x}{An \code{ember_server} or \code{ember_server_handle}, for \code{print()}.}
 \item{...}{Unused; present for consistency with \code{print()} generics.}
 }
@@ -93,6 +99,14 @@ in this console.
 \code{host_notebook()} returns the notebook's edit URL (with the secret). If
 the server already hosts that notebook, nothing changes and the same URL
 is returned.
+
+\code{view_page()} returns the editor as one HTML string with its whole
+frontend inside, for a host that shows the page where it can load nothing
+from the server, such as a sandboxed frame. The host carries the page's
+WebSocket to the server itself, and sets \code{window.pluto_pluto_server_url}
+to the server's address when the page's own location isn't it. The page
+has no notebook in it: it connects and shows the one \code{notebook_id_js}
+names.
 
 \code{stop_server()} returns \code{NULL}, invisibly.
 }
