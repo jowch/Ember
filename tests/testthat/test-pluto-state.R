@@ -850,7 +850,7 @@ test_that("project_output() prepends dependency tags in order; staticRender only
   o2 <- project_output(fake_view(output = new_display("text/html", "<p/>", "p",
     deps = list(list(name = "cdnlib", version = "1", dir = NULL, href = "https://example.org/",
                      script = "a.js", stylesheet = character(), head = NULL)))))
-  expect_match(o2$body, '<script src="https://example.org/a.js">', fixed = TRUE)
+  expect_match(o2$body, '<script src="https://example.org/a.js" data-ember-dep="cdnlib" data-ember-dep-version="1">', fixed = TRUE)
 
   # no dependencies: unchanged
   o3 <- project_output(fake_view(output = new_display("text/html", "<p/>", "p")))
