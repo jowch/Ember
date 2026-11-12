@@ -33,6 +33,7 @@ import { t } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
 import { load_mathjax } from "../common/SetupMathJax.js"
 import { hold_host_deps, use_host_deps } from "../common/HostDeps.js"
+import { watch_widget_sizes } from "../common/WidgetSizes.js"
 
 const prettyAssignee = (assignee) =>
     assignee && assignee.startsWith("const ") ? html`<span style="color: var(--cm-color-keyword)">const</span> ${assignee.slice(6)}` : assignee
@@ -395,7 +396,42 @@ const execute_scripttags = async ({ root_node, script_nodes, previous_results_ma
         nested_script_execution_level += 1
         if (node.src != null && node.src !== "") {
             // If it has a remote src="", de-dupe and copy the script to head
-            let script_el = Array.from(document.head.querySelectorAll("script")).find((s) => s.src === node.src)
+            const head_scripts = Array.from(document.head.querySelectorAll("script"))
+            let script_el = head_scripts.find((s) => s.src === node.src)
+            // A widget dependency (project_dep_tags() in pluto-state.R) loads in one
+            // version per page, the first, as Shiny does. Two outputs can carry
+            // different versions of one library: plotly's jQuery 3.5.1 and DT's
+            // 3.6.0. A second jQuery would replace the first, and with it the
+            // plugins (DataTables) that a later render looks for on it. The first
+            // version stays until the page reloads, even after a package upgrade
+            // brings a newer one; a version whose file failed to load doesn't count.
+            // (In a host's frame, use_host_deps() has already read a skipped
+            // version's file; it just isn't run.)
+            const dep = node.dataset?.emberDep
+            const dep_version = node.dataset?.emberDepVersion
+            const other_versions = () =>
+                Array.from(document.head.querySelectorAll("script")).filter(
+                    (s) => s.dataset.emberDep === dep && s.dataset.emberDepVersion !== dep_version && s.dataset.emberDepFailed == null
+                )
+            if (script_el == undefined && dep != null && other_versions().length > 0) {
+                // Wait for that version's files that are still loading.
+                await Promise.all(
+                    other_versions()
+                        // @ts-ignore
+                        .filter((s) => s.pluto_is_loading_me != null)
+                        .map(
+                            (s) =>
+                                new Promise((resolve) => {
+                                    s.addEventListener("load", resolve)
+                                    s.addEventListener("error", resolve)
+                                })
+                        )
+                )
+                if (other_versions().length > 0) {
+                    nested_script_execution_level -= 1
+                    continue
+                }
+            }
 
             if (script_el == undefined) {
                 script_el = document.createElement("script")
@@ -406,6 +442,10 @@ const execute_scripttags = async ({ root_node, script_nodes, previous_results_ma
                 script_el.nonce = node.nonce
                 script_el.type = node.type
                 script_el.src = node.src
+                if (dep != null) {
+                    script_el.dataset.emberDep = dep
+                    script_el.dataset.emberDepVersion = dep_version ?? ""
+                }
                 // Not copying defer or async because this script is not included in the initial HTML document, so it has no effect.
                 // @ts-ignore
                 script_el.pluto_is_loading_me = true
@@ -417,7 +457,11 @@ const execute_scripttags = async ({ root_node, script_nodes, previous_results_ma
             if (need_to_await) {
                 await new Promise((resolve) => {
                     script_el_really.addEventListener("load", resolve)
-                    script_el_really.addEventListener("error", resolve)
+                    script_el_really.addEventListener("error", (e) => {
+                        // Another version of this dependency may load instead.
+                        if (script_el_really.dataset.emberDep != null) script_el_really.dataset.emberDepFailed = ""
+                        resolve(e)
+                    })
                     document.head.appendChild(script_el_really)
                 })
                 // @ts-ignore
@@ -665,6 +709,7 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
                 }
 
                 apply_enhanced_markup_features(container, pluto_actions)
+                watch_widget_sizes(container)
             } finally {
                 js_init_set?.delete(container)
             }
